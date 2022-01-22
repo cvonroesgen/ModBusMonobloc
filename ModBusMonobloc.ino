@@ -12,14 +12,27 @@ char menu[NUM_MENU_ITEMS][14] = {
   "On or Off   ",
   "Temp set    ", 
   "Tank temp   ", 
-  "H2O out temp", 
-  "H2O in temp ",
-  "Ambient temp", 
+  "H2O > temp  ", 
+  "H2O < temp  ",
+  "Air temp    ", 
   "AC Volts    ", 
   "AC Amps     "
   };
 
 unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
+
+void formatPrint(short number)
+{
+  if (number < 10 && number > 0)
+  {
+    lcd.print(" ");
+  }
+if (number < 100 && number > 0)
+  {
+    lcd.print(" ");
+  }
+  lcd.print(number);
+}
 
 void setup() {
   Serial.begin(2400, SERIAL_8E1);
@@ -34,7 +47,8 @@ digitalWrite(led,1-digitalRead(led));
 }
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 1000;
-int temp;
+int loopCounter = 0;
+
 int columnCounter = 0;
 int rowCounter = 0;
 int8_t menuIndex = 0;
@@ -64,7 +78,12 @@ void loop() {
         else if (buttons & BUTTON_RIGHT) {
         }
         else if (buttons & BUTTON_SELECT) {                 
-                    
+          lcd.clear();
+          lcd.setCursor(0,0);
+          lcd.print("LoopCounter:");
+          lcd.setCursor(0,1);
+          lcd.print(loopCounter);
+          return;
         }
         if(menuIndex < 0)
           {
@@ -75,12 +94,12 @@ void loop() {
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
         short data = getData(menuCodes[menuIndex]);
-        lcd.print(data);
+        formatPrint(data);
         lcd.setCursor(0,1);
         lcd.print(menu[(menuIndex + 1) % NUM_MENU_ITEMS]);
         delay(100);
         data = getData(menuCodes[(menuIndex + 1) % NUM_MENU_ITEMS]);
-        lcd.print(data);
+        formatPrint(data);
       }
   }
 }
@@ -161,7 +180,7 @@ short getData(short code)
   
     short rawByte;
     short byteCounter = 0;
-    int loopCounter = 0;
+    loopCounter = 0;
     do
     {
       loopCounter++;
