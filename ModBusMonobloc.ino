@@ -10,7 +10,7 @@ Adafruit_RGBLCDShield lcd;
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
 int8_t serialReceiveBufferIndex = 0;
 int bufferComplete = 0;
-void (*bufferProcessFunction)();
+short (*serialBufferCallback)();
 unsigned short crc16;
 int led = 13;
 int EN = 2;
@@ -79,7 +79,7 @@ void loop() {
 if(bufferComplete && serialReceiveBufferIndex >= bufferComplete)
   {
     bufferComplete = 0;
-  (*bufferProcessFunction)();
+  (*serialBufferCallback)();
   return;
   }
 
@@ -95,6 +95,7 @@ if(millis() - timer > 300000)
   uint8_t buttons = lcd.readButtons();
 
   if (buttons) {
+    
     if(millis() - lastDebounceTime > debounceDelay)
         {
         lcd.setBacklight(ON);
@@ -114,10 +115,11 @@ if(millis() - timer > 300000)
           return;
         }
         else if (buttons & BUTTON_RIGHT) {
-        }
-        else if (buttons & BUTTON_SELECT) {                 
           displaySerialReceiveBuffer();          
           return;
+        }
+        else if (buttons & BUTTON_SELECT) {
+          return;          
         }
         if(menuIndex < 0)
           {
@@ -127,7 +129,7 @@ if(millis() - timer > 300000)
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
-        requestDataFromMonoBus(menuCodes[menuIndex]);        
+        requestDataForDisplayFromMonoBus(menuCodes[menuIndex]);        
       }
   }
 }
@@ -195,40 +197,38 @@ short convertUnSignedByteToSigned(unsigned short uByte)
 }        
 
 
+void requestDataForDisplayFromMonoBus(short code)
+{
+  byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
+  crc16 = CRC16(byts, 6);
+  byts[6] = crc16 % 256;
+  byts[7] = crc16 >> 8;
+  serialBufferCallback = &displayMonoBusGetResponse;
+  serialReceiveBufferIndex = 0;
+  bufferComplete = 7;
+  
+  Serial.write(byts, 8);
+  Serial.flush();
+  delay(100);
+}
+
 void requestDataFromMonoBus(short code)
 {
   byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
+  serialBufferCallback = &setRadiantFloorTemperatureCallback;
   serialReceiveBufferIndex = 0;
   bufferComplete = 7;
-  bufferProcessFunction = &parseMonoBusGetResponse;
+  
   Serial.write(byts, 8);
   Serial.flush();
   delay(100);
 }
 
 
-short extractDataFromMonoBusGetResponse()
-{
-crc16 = CRC16(serialReceiveBuffer, 5);
-  short data;
-  if(serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8))
-    {
-      if(menuCodes[menuIndex] == 2120)
-        {
-          return serialReceiveBuffer[4];
-        }
-      else
-        {
-          return convertUnSignedByteToSigned(serialReceiveBuffer[4]);
-        }
-    }
-  return menuCodes[menuIndex];
-}
-
-void parseMonoBusGetResponse()
+short displayMonoBusGetResponse()
 {  
   crc16 = CRC16(serialReceiveBuffer, 5);
   short data;
@@ -289,24 +289,24 @@ void setMonoBlocTemperature(short temperature)
   byts[7] = crc16 >> 8;
   serialReceiveBufferIndex = 0;
   bufferComplete = 8;
-  bufferProcessFunction = &parseMonoBusSetResponse;
+  serialBufferCallback = &parseMonoBusSetResponse;
   Serial.write(byts, 8);
   Serial.flush();
   delay(50);
 }
 
-void parseMonoBusSetResponse()
+short parseMonoBusSetResponse()
 {
   crc16 = CRC16(serialReceiveBuffer, 6);
   if(serialReceiveBuffer[6] == (crc16 % 256) && serialReceiveBuffer[7] == (crc16 >> 8))
     {
       lcd.setCursor(0,1);
       lcd.print("Reset CRC success");
-      return;
+      return crc16;
     }
 lcd.setCursor(0,1);
 lcd.print("Reset CRC failed");
-return;
+return crc16;
 }
 
 short calcRadiantFloorTemperature(short outsideTemperature)
@@ -314,15 +314,41 @@ short calcRadiantFloorTemperature(short outsideTemperature)
   return 25 + ((25 - outsideTemperature) / 2);
 }
 
-void setRadiantFloorTemperature()
+short setRadiantFloorTemperature()
 {
   requestDataFromMonoBus(2110);
   delay(100);
-  short outsideTemp = extractDataFromMonoBusGetResponse();
+}
+
+short setRadiantFloorTemperatureCallback()
+{
+  crc16 = CRC16(serialReceiveBuffer, 5);
+  short outsideTemp;
+  short radiantTemperature;
+  if(serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8))
+    {
+      if(menuCodes[menuIndex] == 2120)
+        {
+          outsideTemp = serialReceiveBuffer[4];
+        }
+      else
+        {
+          outsideTemp = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+        }
+    }
+  else
+    {
+      displaySerialReceiveBuffer();
+      lcd.setCursor(0,1);
+      lcd.print("crc ");
+      lcd.print(crc16, HEX);
+      return 0;
+    }
   if(outsideTemp > -23 && outsideTemp < 25)
     {
-    short radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
+    radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
     setMonoBlocTemperature(radiantTemperature);
     }
+  return radiantTemperature;
 }
 
