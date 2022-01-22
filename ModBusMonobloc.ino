@@ -88,6 +88,7 @@ if(millis() - timer > 300000)
   setRadiantFloorTemperature();
   delay(500);
   timer = millis();
+  lcd.setBacklight(OFF);
   return;
   }
 
@@ -96,6 +97,7 @@ if(millis() - timer > 300000)
   if (buttons) {
     if(millis() - lastDebounceTime > debounceDelay)
         {
+        lcd.setBacklight(ON);
         lastDebounceTime = millis();
         if (buttons & BUTTON_UP) {
           menuIndex--;
@@ -125,7 +127,7 @@ if(millis() - timer > 300000)
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
-        getDataFromMonoBus(menuCodes[menuIndex]);        
+        requestDataFromMonoBus(menuCodes[menuIndex]);        
       }
   }
 }
@@ -193,7 +195,7 @@ short convertUnSignedByteToSigned(unsigned short uByte)
 }        
 
 
-void getDataFromMonoBus(short code)
+void requestDataFromMonoBus(short code)
 {
   byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
@@ -205,6 +207,25 @@ void getDataFromMonoBus(short code)
   Serial.write(byts, 8);
   Serial.flush();
   delay(100);
+}
+
+
+short extractDataFromMonoBusGetResponse()
+{
+crc16 = CRC16(serialReceiveBuffer, 5);
+  short data;
+  if(serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8))
+    {
+      if(menuCodes[menuIndex] == 2120)
+        {
+          return serialReceiveBuffer[4];
+        }
+      else
+        {
+          return convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+        }
+    }
+  return menuCodes[menuIndex];
 }
 
 void parseMonoBusGetResponse()
@@ -295,8 +316,9 @@ short calcRadiantFloorTemperature(short outsideTemperature)
 
 void setRadiantFloorTemperature()
 {
-  short outsideTemp = 0;//getData(2110);
-   delay(100);
+  requestDataFromMonoBus(2110);
+  delay(100);
+  short outsideTemp = extractDataFromMonoBusGetResponse();
   if(outsideTemp > -23 && outsideTemp < 25)
     {
     short radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
