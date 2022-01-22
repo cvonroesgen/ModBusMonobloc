@@ -7,7 +7,7 @@
 Adafruit_RGBLCDShield lcd;
 int led = 13;
 int EN = 2;
-
+unsigned long timer = millis();
 char menu[NUM_MENU_ITEMS][14] = {
   "On or Off   ",
   "Temp set    ", 
@@ -39,9 +39,9 @@ void setup() {
   pinMode(led,OUTPUT);
   //Serial.setTimeout(100);
   lcd.begin(16, 2);
-  lcd.print(menu[0]);
+  lcd.print("ModBus");
   lcd.setCursor(0,1);
-  lcd.print(menu[1]);
+  lcd.print("MonoBloc");
 
 digitalWrite(led,1-digitalRead(led));
 }
@@ -49,12 +49,19 @@ unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 1000;
 int loopCounter = 0;
 
-int columnCounter = 0;
-int rowCounter = 0;
 int8_t menuIndex = 0;
  
 void loop() {
   
+if(millis() - timer > 300000)
+  {
+  setRadiantFloorTemperature();
+  delay(500);
+  serialFlush();
+  timer = millis();
+  return;
+  }
+
   uint8_t buttons = lcd.readButtons();
 
   if (buttons) {
@@ -176,8 +183,7 @@ short getData(short code)
   byts[7] = crc16 >> 8;
   Serial.write(byts, 8);
   Serial.flush();
-  delay(50);
-  
+  delay(50);  
     short rawByte;
     short byteCounter = 0;
     loopCounter = 0;
@@ -204,7 +210,74 @@ short getData(short code)
       return convertUnSignedByteToSigned(byts[4]);
     }
 
-return -loopCounter;
+return code;
 }
 
+bool setMonoBlocTemperature(short temperature)
+{
 
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Reset: ");
+  lcd.print(temperature);
+  short code = 2004;
+  byte byts[8] = {1, 6, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
+  byts[4] = temperature >> 8;
+  byts[5] = temperature % 256;
+  unsigned short crc16;
+  crc16 = CRC16(byts, 6);
+  byts[6] = crc16 % 256;
+  byts[7] = crc16 >> 8;
+  Serial.write(byts, 8);
+  Serial.flush();
+  delay(50);
+  
+    short rawByte;
+    short byteCounter = 0;
+    loopCounter = 0;
+    do
+    {
+      loopCounter++;
+      if(Serial.available())
+      {
+        rawByte = Serial.read();
+        if(rawByte != -1)
+          {
+          byts[byteCounter] = rawByte;
+          byteCounter++;
+          }        
+      }
+    }while (byteCounter < 7 and loopCounter < 1000);
+  crc16 = CRC16(byts, 6);
+  if(byts[6] == (crc16 % 256) && byts[7] == (crc16 >> 8))
+    {
+      lcd.setCursor(0,1);
+      lcd.print("Reset CRC success");
+      return true;
+    }
+lcd.setCursor(0,1);
+lcd.print("Reset CRC failed");
+return false;
+}
+
+short calcRadiantFloorTemperature(short outsideTemperature)
+{
+  return 25 + ((25 - outsideTemperature) / 2);
+}
+
+void setRadiantFloorTemperature()
+{
+  short outsideTemp = getData(2110);
+   delay(100);
+  if(outsideTemp > -23 && outsideTemp < 25)
+    {
+    short radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
+    setMonoBlocTemperature(radiantTemperature);
+    }
+}
+
+void serialFlush(){
+  while(Serial.available() > 0) {
+    char t = Serial.read();
+  }
+}
