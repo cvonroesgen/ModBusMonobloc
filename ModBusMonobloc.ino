@@ -4,10 +4,19 @@
 #define OFF 0x0
 #define ON 0x1
 #define NUM_MENU_ITEMS 8
+#define SERIAL_BUFFER_SIZE 16
 Adafruit_RGBLCDShield lcd;
+
+byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
+int8_t serialReceiveBufferIndex = 0;
+int bufferComplete = 0;
+void (*bufferProcessFunction)();
+unsigned short crc16;
 int led = 13;
 int EN = 2;
 unsigned long timer = millis();
+
+unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
 char menu[NUM_MENU_ITEMS][14] = {
   "On or Off   ",
   "Temp set    ", 
@@ -19,10 +28,11 @@ char menu[NUM_MENU_ITEMS][14] = {
   "AC Amps     "
   };
 
-unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
+
 
 void formatPrint(short number)
 {
+  lcd.print(" -> ");
   if (number < 10 && number > 0)
   {
     lcd.print(" ");
@@ -30,14 +40,13 @@ void formatPrint(short number)
 if (number < 100 && number > 0)
   {
     lcd.print(" ");
-  }
+  }  
   lcd.print(number);
 }
 
 void setup() {
   Serial.begin(2400, SERIAL_8E1);
   pinMode(led,OUTPUT);
-  //Serial.setTimeout(100);
   lcd.begin(16, 2);
   lcd.print("ModBus");
   lcd.setCursor(0,1);
@@ -53,11 +62,31 @@ int8_t menuIndex = 0;
  
 void loop() {
   
+
+  while(Serial.available() > 0) {
+    if(serialReceiveBufferIndex < SERIAL_BUFFER_SIZE)
+    {
+      serialReceiveBuffer[serialReceiveBufferIndex] = Serial.read();
+      serialReceiveBufferIndex++;
+    }
+  else
+    {
+     serialReceiveBufferIndex = 0;
+     serialReceiveBuffer[serialReceiveBufferIndex] = Serial.read(); 
+    }
+  }
+
+if(bufferComplete && serialReceiveBufferIndex >= bufferComplete)
+  {
+    bufferComplete = 0;
+  (*bufferProcessFunction)();
+  return;
+  }
+
 if(millis() - timer > 300000)
   {
   setRadiantFloorTemperature();
   delay(500);
-  serialFlush();
   timer = millis();
   return;
   }
@@ -77,36 +106,26 @@ if(millis() - timer > 300000)
         else if (buttons & BUTTON_LEFT) {
           lcd.clear();
           lcd.setCursor(0,0);
-          lcd.print(menuCodes[menuIndex]);
+          lcd.print("crc:");
           lcd.setCursor(0,1);
-          lcd.print(menuCodes[(menuIndex + 1) % NUM_MENU_ITEMS]);
+          lcd.print(crc16, HEX);
           return;
         }
         else if (buttons & BUTTON_RIGHT) {
         }
         else if (buttons & BUTTON_SELECT) {                 
-          lcd.clear();
-          lcd.setCursor(0,0);
-          lcd.print("LoopCounter:");
-          lcd.setCursor(0,1);
-          lcd.print(loopCounter);
+          displaySerialReceiveBuffer();          
           return;
         }
         if(menuIndex < 0)
           {
           menuIndex += NUM_MENU_ITEMS;
           }
-        menuIndex = menuIndex % (NUM_MENU_ITEMS - 1);
+        menuIndex = menuIndex % NUM_MENU_ITEMS;
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
-        short data = getData(menuCodes[menuIndex]);
-        formatPrint(data);
-        lcd.setCursor(0,1);
-        lcd.print(menu[(menuIndex + 1) % NUM_MENU_ITEMS]);
-        delay(100);
-        data = getData(menuCodes[(menuIndex + 1) % NUM_MENU_ITEMS]);
-        formatPrint(data);
+        getDataFromMonoBus(menuCodes[menuIndex]);        
       }
   }
 }
@@ -174,90 +193,99 @@ short convertUnSignedByteToSigned(unsigned short uByte)
 }        
 
 
-short getData(short code)
+void getDataFromMonoBus(short code)
 {
   byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
-  unsigned short crc16;
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
+  serialReceiveBufferIndex = 0;
+  bufferComplete = 7;
+  bufferProcessFunction = &parseMonoBusGetResponse;
   Serial.write(byts, 8);
   Serial.flush();
-  delay(50);  
-    short rawByte;
-    short byteCounter = 0;
-    loopCounter = 0;
-    do
-    {
-      loopCounter++;
-      if(Serial.available())
-      {
-        rawByte = Serial.read();
-        if(rawByte != -1)
-          {
-          byts[byteCounter] = rawByte;
-          byteCounter++;
-          }        
-      }
-    }while (byteCounter < 7 and loopCounter < 1000);
-  crc16 = CRC16(byts, 5);
-  if(byts[5] == (crc16 % 256) && byts[6] == (crc16 >> 8))
-    {
-      if(code == 2120)
-        {
-          return byts[4];
-        }
-      return convertUnSignedByteToSigned(byts[4]);
-    }
-
-return code;
+  delay(100);
 }
 
-bool setMonoBlocTemperature(short temperature)
-{
+void parseMonoBusGetResponse()
+{  
+  crc16 = CRC16(serialReceiveBuffer, 5);
+  short data;
+  if(serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8))
+    {
+      if(menuCodes[menuIndex] == 2120)
+        {
+          data = serialReceiveBuffer[4];
+        }
+      else
+        {
+          data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+        }
+    lcd.setCursor(0,1);
+    lcd.print(menuCodes[menuIndex]);
+    formatPrint(data);
+    }
+  else
+    {
+      displaySerialReceiveBuffer();
+      lcd.setCursor(0,1);
+      lcd.print("crc ");
+      lcd.print(crc16, HEX);
+    }  
+}
 
+
+void displaySerialReceiveBuffer()
+{
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print("Reset: ");
+  for(int i = 0; i < SERIAL_BUFFER_SIZE; i++)
+    {
+      if(i == 8)
+      {
+        lcd.setCursor(0,1);
+      }
+      if(serialReceiveBuffer[i] < 16)
+        {
+          lcd.print("0");
+        }
+      lcd.print(serialReceiveBuffer[i], HEX);
+    }
+}
+
+void setMonoBlocTemperature(short temperature)
+{
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Reset to: ");
   lcd.print(temperature);
   short code = 2004;
   byte byts[8] = {1, 6, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   byts[4] = temperature >> 8;
   byts[5] = temperature % 256;
-  unsigned short crc16;
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
+  serialReceiveBufferIndex = 0;
+  bufferComplete = 8;
+  bufferProcessFunction = &parseMonoBusSetResponse;
   Serial.write(byts, 8);
   Serial.flush();
   delay(50);
-  
-    short rawByte;
-    short byteCounter = 0;
-    loopCounter = 0;
-    do
-    {
-      loopCounter++;
-      if(Serial.available())
-      {
-        rawByte = Serial.read();
-        if(rawByte != -1)
-          {
-          byts[byteCounter] = rawByte;
-          byteCounter++;
-          }        
-      }
-    }while (byteCounter < 7 and loopCounter < 1000);
-  crc16 = CRC16(byts, 6);
-  if(byts[6] == (crc16 % 256) && byts[7] == (crc16 >> 8))
+}
+
+void parseMonoBusSetResponse()
+{
+  crc16 = CRC16(serialReceiveBuffer, 6);
+  if(serialReceiveBuffer[6] == (crc16 % 256) && serialReceiveBuffer[7] == (crc16 >> 8))
     {
       lcd.setCursor(0,1);
       lcd.print("Reset CRC success");
-      return true;
+      return;
     }
 lcd.setCursor(0,1);
 lcd.print("Reset CRC failed");
-return false;
+return;
 }
 
 short calcRadiantFloorTemperature(short outsideTemperature)
@@ -267,7 +295,7 @@ short calcRadiantFloorTemperature(short outsideTemperature)
 
 void setRadiantFloorTemperature()
 {
-  short outsideTemp = getData(2110);
+  short outsideTemp = 0;//getData(2110);
    delay(100);
   if(outsideTemp > -23 && outsideTemp < 25)
     {
@@ -276,8 +304,3 @@ void setRadiantFloorTemperature()
     }
 }
 
-void serialFlush(){
-  while(Serial.available() > 0) {
-    char t = Serial.read();
-  }
-}
