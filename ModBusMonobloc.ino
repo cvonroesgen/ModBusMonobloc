@@ -40,7 +40,7 @@ int rowCounter = 0;
 int8_t menuIndex = 0;
  
 void loop() {
-
+  
   uint8_t buttons = lcd.readButtons();
 
   if (buttons) {
@@ -54,13 +54,17 @@ void loop() {
           menuIndex++;
         }
         else if (buttons & BUTTON_LEFT) {
-          menuIndex++;
+          lcd.clear();
+          lcd.setCursor(0,0);
+          lcd.print(menuCodes[menuIndex]);
+          lcd.setCursor(0,1);
+          lcd.print(menuCodes[(menuIndex + 1) % NUM_MENU_ITEMS]);
+          return;
         }
         else if (buttons & BUTTON_RIGHT) {
-          menuIndex++;
         }
         else if (buttons & BUTTON_SELECT) {                 
-          menuIndex++;            
+                    
         }
         if(menuIndex < 0)
           {
@@ -70,7 +74,7 @@ void loop() {
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
-        int8_t data = getData(menuCodes[menuIndex]);
+        short data = getData(menuCodes[menuIndex]);
         lcd.print(data);
         lcd.setCursor(0,1);
         lcd.print(menu[(menuIndex + 1) % NUM_MENU_ITEMS]);
@@ -131,7 +135,7 @@ byte nTemp;
 }
 
 
-int8_t convertUnSignedByteToSigned(byte uByte)
+short convertUnSignedByteToSigned(unsigned short uByte)
 {
   if (uByte < 128)
     {
@@ -144,7 +148,7 @@ int8_t convertUnSignedByteToSigned(byte uByte)
 }        
 
 
-int8_t getData(short code)
+short getData(short code)
 {
   byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   unsigned short crc16;
@@ -153,7 +157,7 @@ int8_t getData(short code)
   byts[7] = crc16 >> 8;
   Serial.write(byts, 8);
   Serial.flush();
-  delay(500);
+  delay(50);
   
     short rawByte;
     short byteCounter = 0;
@@ -170,11 +174,14 @@ int8_t getData(short code)
           byteCounter++;
           }        
       }
-      delay(10);
-    }while (byteCounter < 7 and loopCounter < 100);
+    }while (byteCounter < 7 and loopCounter < 1000);
   crc16 = CRC16(byts, 5);
   if(byts[5] == (crc16 % 256) && byts[6] == (crc16 >> 8))
     {
+      if(code == 2120)
+        {
+          return byts[4];
+        }
       return convertUnSignedByteToSigned(byts[4]);
     }
 
