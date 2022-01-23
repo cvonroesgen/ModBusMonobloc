@@ -5,6 +5,8 @@
 #define ON 0x1
 #define NUM_MENU_ITEMS 8
 #define SERIAL_BUFFER_SIZE 16
+#define outDoorResetIntervalMinutes 5
+#define lcdLEDDisplayIntervalSeconds 10
 Adafruit_RGBLCDShield lcd;
 
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
@@ -14,7 +16,8 @@ short (*serialBufferCallback)();
 unsigned short crc16;
 int led = 13;
 int EN = 2;
-unsigned long timer = millis();
+unsigned long outDoorResetTimer = millis();
+unsigned long ledDisplayTimer = millis();
 
 unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
 char menu[NUM_MENU_ITEMS][14] = {
@@ -83,19 +86,25 @@ if(bufferComplete && serialReceiveBufferIndex >= bufferComplete)
   return;
   }
 
-if(millis() - timer > 300000)
+if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
   {
   setRadiantFloorTemperature();
   delay(500);
-  timer = millis();
+  outDoorResetTimer = millis();
+  return;
+  }
+
+  if(millis() - ledDisplayTimer > lcdLEDDisplayIntervalSeconds * 1000)
+  {
   lcd.setBacklight(OFF);
+  ledDisplayTimer = millis();
   return;
   }
 
   uint8_t buttons = lcd.readButtons();
 
   if (buttons) {
-    
+    ledDisplayTimer = millis();
     if(millis() - lastDebounceTime > debounceDelay)
         {
         lcd.setBacklight(ON);
