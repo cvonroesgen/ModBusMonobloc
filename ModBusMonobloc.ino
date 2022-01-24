@@ -22,20 +22,22 @@ unsigned long ledDisplayTimer = millis();
 unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
 char menu[NUM_MENU_ITEMS][14] = {
   "On or Off   ",
-  "Temp set    ", 
-  "Tank temp   ", 
-  "H2O > temp  ", 
-  "H2O < temp  ",
-  "Air temp    ", 
+  "Temp Set    ", 
+  "Temp Tank   ", 
+  "Temp H2O >  ", 
+  "Temp H2O <   ",
+  "Temp Air     ", 
   "AC Volts    ", 
   "AC Amps     "
   };
-
+short outsideTemp;
+short radiantTemperature;
+float COP = 0;
+  
 
 
 void formatPrint(short number)
 {
-  lcd.print(" -> ");
   if (number < 10 && number > 0)
   {
     lcd.print(" ");
@@ -118,8 +120,10 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
         else if (buttons & BUTTON_LEFT) {
           lcd.clear();
           lcd.setCursor(0,0);
-          lcd.print("crc:");
+          lcd.print("COP: ");
+          lcd.print(COP);
           lcd.setCursor(0,1);
+          lcd.print("crc:");
           lcd.print(crc16, HEX);
           return;
         }
@@ -221,16 +225,15 @@ void requestDataForDisplayFromMonoBus(short code)
   delay(100);
 }
 
-void requestDataFromMonoBus(short code)
+void requestDataFromMonoBus(short code, short(*callback)())
 {
   byte byts[8] = {1, 3, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
-  serialBufferCallback = &setRadiantFloorTemperatureCallback;
+  serialBufferCallback = callback;
   serialReceiveBufferIndex = 0;
   bufferComplete = 7;
-  
   Serial.write(byts, 8);
   Serial.flush();
   delay(100);
@@ -252,8 +255,14 @@ short displayMonoBusGetResponse()
           data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
         }
     lcd.setCursor(0,1);
-    lcd.print(menuCodes[menuIndex]);
     formatPrint(data);
+    if(menuCodes[menuIndex] >= 2004 && menuCodes[menuIndex] <= 2110)
+      {
+      lcd.print("C ");
+      lcd.print((data * 2.2) + 32);
+      lcd.print("F");
+
+      }
     }
   else
     {
@@ -320,20 +329,18 @@ return crc16;
 
 short calcRadiantFloorTemperature(short outsideTemperature)
 {
-  return 25 + ((25 - outsideTemperature) / 2);
+  return 20 + ((20 - outsideTemperature) / 1.5);
 }
 
 short setRadiantFloorTemperature()
 {
-  requestDataFromMonoBus(2110);
+  requestDataFromMonoBus(2110, &setRadiantFloorTemperatureCallback);
   delay(100);
 }
 
 short setRadiantFloorTemperatureCallback()
 {
   crc16 = CRC16(serialReceiveBuffer, 5);
-  short outsideTemp;
-  short radiantTemperature;
   if(serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8))
     {
       if(menuCodes[menuIndex] == 2120)
@@ -358,6 +365,85 @@ short setRadiantFloorTemperatureCallback()
     radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
     setMonoBlocTemperature(radiantTemperature);
     }
+    COP = calcCOP(radiantTemperature, outsideTemp);
+    lcd.print("COP ");
+    lcd.print(COP);
   return radiantTemperature;
 }
 
+float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp, int8_t airTemp, int8_t deltaWater, int8_t deltaAir, float copHiWaterHiAir, float copHiWaterLowAir, float copLoWaterHiAir, float copLoWaterLowAir)
+{
+float loAirMidWaterCOP = (copLoWaterLowAir - copHiWaterLowAir)*(HiWaterTemp - waterTemp)/deltaWater;
+float hiAirMidWaterCOP = (copLoWaterHiAir - copHiWaterHiAir)*(HiWaterTemp - waterTemp)/deltaWater;
+float loWaterMidAirCOP = (copLoWaterHiAir - copLoWaterLowAir)*(HiAirTemp - airTemp)/deltaAir;
+float hiWaterMidAirCOP = (copHiWaterHiAir - copHiWaterLowAir)*(HiAirTemp - airTemp)/deltaAir;
+return (hiAirMidWaterCOP + hiAirMidWaterCOP + loWaterMidAirCOP + hiWaterMidAirCOP)/4;
+}
+
+int8_t airTemps[] = {15, 7, 2, -7, -12, -15, -20, -25};
+int8_t waterTemps[] = {45, 41, 35, 30, 20};
+float waterCOPs[6][9] ={ 
+                      {4.75, 3.68, 2.99, 2.84, 2.65, 2.21, 2.01, 1.57, 1.47},
+                      {5.1, 3.92, 3.05, 2.96, 2.87, 2.48, 2.22, 1.73, 1.59},
+                      {5.51,4.15,3.65,3.28, 2.94, 2.63, 2.32, 2.01, 1.65},
+                      {5.92, 4.76, 4.2, 3.63, 3.2, 2.95, 2.60, 2.17, 1.78},
+                      {6.93, 5.43, 4.85, 4.3, 3.7, 3.31, 2.81, 2.48, 2.03},
+                      {7.85, 6.30, 5.45, 4.81, 4.27, 3.72, 3.12, 2.79, 2.3}
+                      };
+float calcCOP(int8_t waterTemp, int8_t airTemp)
+{
+if(waterTemp >= waterTemps[0])
+  {
+  return cop(waterTemp,  airTemp, waterCOPs[0], waterCOPs[1]);
+  }
+if(waterTemp >= waterTemps[1])
+  {
+  return cop(waterTemp,  airTemp, waterCOPs[1], waterCOPs[2]);
+  }
+if(waterTemp >= waterTemps[2])
+  {
+  return cop(waterTemp,  airTemp, waterCOPs[2], waterCOPs[3]);
+  }
+if(waterTemp >= waterTemps[3])
+  {
+  return cop(waterTemp,  airTemp, waterCOPs[3], waterCOPs[4]);
+  }
+  if(waterTemp >= waterTemps[4])
+  {
+  return cop(waterTemp,  airTemp, waterCOPs[4], waterCOPs[5]);
+  }
+return 0;
+}
+
+float cop(int8_t waterTemp, int8_t airTemp, float* hiWaterCOPs, float* loWaterCOPs)
+{
+if(airTemp >= airTemps[0])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[0], waterTemp, airTemp, 4, airTemps[0] - airTemps[1], hiWaterCOPs[0], hiWaterCOPs[1], loWaterCOPs[0], loWaterCOPs[1]);
+    }
+  else if(airTemp >= airTemps[1])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[1], waterTemp, airTemp, 4, airTemps[1] - airTemps[2], hiWaterCOPs[1], hiWaterCOPs[2], loWaterCOPs[1], loWaterCOPs[2]);
+    }
+  else if(airTemp >= airTemps[2])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[2], waterTemp, airTemp, 4, airTemps[2] - airTemps[3], hiWaterCOPs[2], hiWaterCOPs[3], loWaterCOPs[2], loWaterCOPs[3]);
+    }
+  else if(airTemp >= airTemps[3])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[3], waterTemp, airTemp, 4, airTemps[3] - airTemps[4], hiWaterCOPs[3], hiWaterCOPs[4], loWaterCOPs[3], loWaterCOPs[4]);
+    }
+  else if(airTemp >= airTemps[4])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[4], waterTemp, airTemp, 4, airTemps[4] - airTemps[5], hiWaterCOPs[4], hiWaterCOPs[5], loWaterCOPs[4], loWaterCOPs[5]);
+    }
+  else if(airTemp >= airTemps[5])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[5], waterTemp, airTemp, 4, airTemps[5] - airTemps[6], hiWaterCOPs[5], hiWaterCOPs[6], loWaterCOPs[5], loWaterCOPs[6]);
+    }
+  else if(airTemp >= airTemps[6])
+    {
+    return interpolateCOP(waterTemps[0], airTemps[6], waterTemp, airTemp, 4, airTemps[6] - airTemps[7], hiWaterCOPs[6], hiWaterCOPs[7], loWaterCOPs[6], loWaterCOPs[7]);
+    }
+return 0;
+}
