@@ -294,10 +294,6 @@ void displaySerialReceiveBuffer()
 
 void setMonoBlocTemperature(short temperature)
 {
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Reset to: ");
-  lcd.print(temperature);
   short code = 2004;
   byte byts[8] = {1, 6, (byte) (code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   byts[4] = temperature >> 8;
@@ -315,14 +311,18 @@ void setMonoBlocTemperature(short temperature)
 
 short parseMonoBusSetResponse()
 {
+  lcd.clear();
+  lcd.setCursor(0,0);
   crc16 = CRC16(serialReceiveBuffer, 6);
   if(serialReceiveBuffer[6] == (crc16 % 256) && serialReceiveBuffer[7] == (crc16 >> 8))
     {
+      lcd.print("Reset success");
       lcd.setCursor(0,1);
-      lcd.print("Reset CRC success");
+      COP = calcCOP(radiantTemperature, outsideTemp);
+      lcd.print("COP ");
+      lcd.print(COP);
       return crc16;
     }
-lcd.setCursor(0,1);
 lcd.print("Reset CRC failed");
 return crc16;
 }
@@ -365,9 +365,7 @@ short setRadiantFloorTemperatureCallback()
     radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
     setMonoBlocTemperature(radiantTemperature);
     }
-    COP = calcCOP(radiantTemperature, outsideTemp);
-    lcd.print("COP ");
-    lcd.print(COP);
+    
   return radiantTemperature;
 }
 
