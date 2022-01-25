@@ -7,6 +7,8 @@
 #define SERIAL_BUFFER_SIZE 16
 #define outDoorResetIntervalMinutes 5
 #define lcdLEDDisplayIntervalSeconds 10
+#define NO_HEAT_REQUIRED_TEMP_IN_C 22
+#define DEGREES_C_TO_RAISE_H20 .7
 Adafruit_RGBLCDShield lcd;
 
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
@@ -329,7 +331,7 @@ return crc16;
 
 short calcRadiantFloorTemperature(short outsideTemperature)
 {
-  return 20 + ((20 - outsideTemperature) / 1.5);
+  return NO_HEAT_REQUIRED_TEMP_IN_C + ((NO_HEAT_REQUIRED_TEMP_IN_C - outsideTemperature)*DEGREES_C_TO_RAISE_H20);
 }
 
 short setRadiantFloorTemperature()
