@@ -1,14 +1,18 @@
 #include <Adafruit_RGBLCDShield.h>
+#include <EEPROM.h>
 
-// These #defines make it easy to set the backlight color
 #define OFF 0x0
 #define ON 0x1
-#define NUM_MENU_ITEMS 8
+#define NUM_MENU_ITEMS 11
 #define SERIAL_BUFFER_SIZE 16
 #define outDoorResetIntervalMinutes 5
 #define lcdLEDDisplayIntervalSeconds 10
 #define NO_HEAT_REQUIRED_TEMP_IN_C 22
+#define NO_HEAT_REQUIRED_HI_LIMIT 25
+#define NO_HEAT_REQUIRED_LO_LIMIT 18
 #define DEGREES_C_TO_RAISE_H20 .7
+#define DEGREES_C_TO_RAISE_H20_HI_LIMIT 1.0f
+#define DEGREES_C_TO_RAISE_H20_LO_LIMIT 0.5f
 Adafruit_RGBLCDShield lcd;
 
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
@@ -21,8 +25,8 @@ int EN = 2;
 unsigned long outDoorResetTimer = millis();
 unsigned long ledDisplayTimer = millis();
 
-unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121};
-char menu[NUM_MENU_ITEMS][14] = {
+unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121, 200, 201, 202};
+char menu[NUM_MENU_ITEMS][17] = {
   "On or Off   ",
   "Temp Set    ", 
   "Temp Tank   ", 
@@ -30,12 +34,16 @@ char menu[NUM_MENU_ITEMS][14] = {
   "Temp H2O <   ",
   "Temp Air     ", 
   "AC Volts    ", 
-  "AC Amps     "
+  "AC Amps     ",
+  "Set No Heat Temp",
+  "C up per C down",
+  "COP & CRC"
   };
 short outsideTemp;
 short radiantTemperature;
 float COP = 0;
-  
+float degreesToRaiseH2O;  
+int8_t noHeatRequiredTempInC;
 
 
 void formatPrint(short number)
@@ -58,7 +66,21 @@ void setup() {
   lcd.print("ModBus");
   lcd.setCursor(0,1);
   lcd.print("MonoBloc");
-
+  
+  EEPROM.get(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
+  if(noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT || noHeatRequiredTempInC < NO_HEAT_REQUIRED_LO_LIMIT)
+    {
+      noHeatRequiredTempInC = NO_HEAT_REQUIRED_TEMP_IN_C;
+      EEPROM.put(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
+    }
+  EEPROM.get(0, degreesToRaiseH2O);
+  lcd.print(degreesToRaiseH2O);
+  if(isnan(degreesToRaiseH2O) || degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT || degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT)
+    {
+      degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20;
+      EEPROM.put(0, degreesToRaiseH2O);
+    }
+  
 digitalWrite(led,1-digitalRead(led));
 }
 unsigned long lastDebounceTime = 0;
@@ -120,20 +142,66 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
           menuIndex++;
         }
         else if (buttons & BUTTON_LEFT) {
-          lcd.clear();
-          lcd.setCursor(0,0);
-          lcd.print("COP: ");
-          lcd.print(COP);
-          lcd.setCursor(0,1);
-          lcd.print("crc:");
-          lcd.print(crc16, HEX);
+          if(menuCodes[menuIndex] == 200)
+            {
+            noHeatRequiredTempInC--;
+            if(noHeatRequiredTempInC < NO_HEAT_REQUIRED_LO_LIMIT)
+              {
+                noHeatRequiredTempInC = NO_HEAT_REQUIRED_LO_LIMIT;
+              }
+            lcd.setCursor(0,1);
+            lcd.print(noHeatRequiredTempInC);
+            }
+          else if(menuCodes[menuIndex] == 201)
+            {
+            degreesToRaiseH2O -= 0.1f;
+            if(degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT)
+              {
+                degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20_LO_LIMIT;
+              }
+            lcd.setCursor(0,1);
+            lcd.print(degreesToRaiseH2O);            
+            } 
           return;
         }
         else if (buttons & BUTTON_RIGHT) {
-          displaySerialReceiveBuffer();          
+          if(menuCodes[menuIndex] == 200)
+            {
+            noHeatRequiredTempInC++;
+            if(noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT)
+              {
+                noHeatRequiredTempInC = NO_HEAT_REQUIRED_HI_LIMIT;
+              }
+            lcd.setCursor(0,1);
+            lcd.print(noHeatRequiredTempInC);
+            }
+          else if(menuCodes[menuIndex] == 201)
+            {
+            degreesToRaiseH2O += 0.1f;
+            if(degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT)
+              {
+                degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20_HI_LIMIT;
+              }
+            lcd.setCursor(0,1);
+            lcd.print(degreesToRaiseH2O);
+            }          
           return;
         }
         else if (buttons & BUTTON_SELECT) {
+          if(menuCodes[menuIndex] == 200)
+            {
+            EEPROM.put(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
+            lcd.setCursor(0,1);
+            lcd.print(noHeatRequiredTempInC);
+            lcd.print(" saved");
+            }
+          else if(menuCodes[menuIndex] == 201)
+            {
+            EEPROM.put(0, degreesToRaiseH2O);
+            lcd.setCursor(0,1);
+            lcd.print(degreesToRaiseH2O);
+            lcd.print(" saved");
+            }         
           return;          
         }
         if(menuIndex < 0)
@@ -144,7 +212,28 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
-        requestDataForDisplayFromMonoBus(menuCodes[menuIndex]);        
+        if(menuCodes[menuIndex] >= 2000)
+          {
+          requestDataForDisplayFromMonoBus(menuCodes[menuIndex]);
+          }
+        else if(menuCodes[menuIndex] == 202)
+          {
+          lcd.setCursor(0,1);
+          lcd.print("COP: ");
+          lcd.print(COP);
+          lcd.print(" CRC: ");
+          lcd.print(crc16, HEX);
+          }
+        else if(menuCodes[menuIndex] == 200)
+          {
+          lcd.setCursor(0,1);
+          lcd.print(noHeatRequiredTempInC);
+          }
+        else if(menuCodes[menuIndex] == 201)
+          {
+          lcd.setCursor(0,1);
+          lcd.print(degreesToRaiseH2O);
+          }
       }
   }
 }

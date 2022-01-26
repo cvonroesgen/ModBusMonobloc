@@ -1,5 +1,6 @@
 
 #include <Adafruit_RGBLCDShield.h>
+#include <EEPROM.h>
 
 // These #defines make it easy to set the backlight color
 #define OFF 0x0
@@ -18,11 +19,29 @@ int EN = 2;
 void setup() {
   Serial.begin(9600);
   // put your setup code here, to run once:
-pinMode(led,OUTPUT);
+  pinMode(led,OUTPUT);
   lcd.begin(16, 2);
+  float f = 0;
+  int i = 0;
+  //lcd.print(EEPROM.length());
+  lcd.print(EEPROM.get(1, i));
+  return;
   float cop = calcCOP(38, 4);
   lcd.print(" cop:");
   lcd.print(cop);
+
+
+int index = 0;
+
+  while (index < EEPROM.length()) {
+
+    //Add one to each cell in the EEPROM
+
+    lcd.print(EEPROM[ index ]);
+
+    index++;
+
+  }
   
 }
 
