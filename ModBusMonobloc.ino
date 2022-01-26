@@ -74,7 +74,6 @@ void setup() {
       EEPROM.put(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
     }
   EEPROM.get(0, degreesToRaiseH2O);
-  lcd.print(degreesToRaiseH2O);
   if(isnan(degreesToRaiseH2O) || degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT || degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT)
     {
       degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20;
@@ -219,9 +218,8 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
         else if(menuCodes[menuIndex] == 202)
           {
           lcd.setCursor(0,1);
-          lcd.print("COP: ");
           lcd.print(COP);
-          lcd.print(" CRC: ");
+          lcd.print(" & ");
           lcd.print(crc16, HEX);
           }
         else if(menuCodes[menuIndex] == 200)
