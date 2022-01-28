@@ -83,7 +83,7 @@ void setup() {
 digitalWrite(led,1-digitalRead(led));
 }
 unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 1000;
+unsigned long debounceDelay = 500;
 int loopCounter = 0;
 
 int8_t menuIndex = 0;
@@ -114,7 +114,6 @@ if(bufferComplete && serialReceiveBufferIndex >= bufferComplete)
 if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
   {
   setRadiantFloorTemperature();
-  delay(500);
   outDoorResetTimer = millis();
   return;
   }
@@ -311,7 +310,6 @@ void requestDataForDisplayFromMonoBus(short code)
   
   Serial.write(byts, 8);
   Serial.flush();
-  delay(100);
 }
 
 void requestDataFromMonoBus(short code)
@@ -325,7 +323,6 @@ void requestDataFromMonoBus(short code)
   bufferComplete = 7;
   Serial.write(byts, 8);
   Serial.flush();
-  delay(100);
 }
 
 
@@ -395,7 +392,6 @@ void setMonoBlocTemperature(short temperature)
   serialBufferCallback = &parseMonoBusSetResponse;
   Serial.write(byts, 8);
   Serial.flush();
-  delay(50);
 }
 
 short parseMonoBusSetResponse()
@@ -424,7 +420,6 @@ short calcRadiantFloorTemperature(short outsideTemperature)
 short setRadiantFloorTemperature()
 {
   requestDataFromMonoBus(2110);
-  delay(100);
 }
 
 short setRadiantFloorTemperatureCallback()
