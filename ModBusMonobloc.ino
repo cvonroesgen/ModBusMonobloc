@@ -414,7 +414,7 @@ return crc16;
 
 short calcRadiantFloorTemperature(short outsideTemperature)
 {
-  return NO_HEAT_REQUIRED_TEMP_IN_C + ((NO_HEAT_REQUIRED_TEMP_IN_C - outsideTemperature)*DEGREES_C_TO_RAISE_H20);
+  return noHeatRequiredTempInC + ((noHeatRequiredTempInC - outsideTemperature)*degreesToRaiseH2O);
 }
 
 short setRadiantFloorTemperature()
