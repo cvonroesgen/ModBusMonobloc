@@ -5,7 +5,7 @@
 #define ON 0x1
 #define NUM_MENU_ITEMS 11
 #define SERIAL_BUFFER_SIZE 16
-#define outDoorResetIntervalMinutes 5
+#define outDoorResetIntervalMinutes 60
 #define lcdLEDDisplayIntervalSeconds 10
 #define NO_HEAT_REQUIRED_TEMP_IN_C 22
 #define NO_HEAT_REQUIRED_HI_LIMIT 25
