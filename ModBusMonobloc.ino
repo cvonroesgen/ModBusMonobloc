@@ -164,14 +164,14 @@ void handleMODBUSandButtons() {
     return;
   }
 
-  if ((millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000) && dewPointFetchedFromNWS) {
+  if ((millis() > (outDoorResetIntervalMinutes * 60000) + outDoorResetTimer) && dewPointFetchedFromNWS) {
     requestDataFromMonoBus(AMBIENT_TEMP, &setRadiantFloorTemperatureCallback);
     setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
     outDoorResetTimer = millis();
     return;
   }
 
-  if (millis() - ledDisplayTimer > lcdLEDDisplayIntervalSeconds * 1000) {
+  if (millis() > ledDisplayTimer + (lcdLEDDisplayIntervalSeconds * 1000)) {
     lcd.setBacklight(OFF);
     ledDisplayTimer = millis();
     return;
@@ -181,7 +181,7 @@ void handleMODBUSandButtons() {
 
   if (buttons) {
     ledDisplayTimer = millis();
-    if (millis() - lastDebounceTime > debounceDelay) {
+    if (millis() > debounceDelay + lastDebounceTime ) {
       lcd.setBacklight(ON);
       lastDebounceTime = millis();
       if (buttons & BUTTON_UP) {
