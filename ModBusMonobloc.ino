@@ -1,9 +1,15 @@
 #include <Adafruit_RGBLCDShield.h>
 #include <EEPROM.h>
 
+//to do https://api.weather.gov/stations/KBED/observations/latest
+//properties.dewpoint.value
+//properties.dewpoint.qualityControl
+// 2107	03	External coil temperature	Unicode/double byte		
+// 2108	03	Cooling coil temperature	Unicode/double byte		
+
 #define OFF 0x0
 #define ON 0x1
-#define NUM_MENU_ITEMS 11
+#define NUM_MENU_ITEMS 12
 #define SERIAL_BUFFER_SIZE 16
 #define outDoorResetIntervalMinutes 60
 #define lcdLEDDisplayIntervalSeconds 10
@@ -25,7 +31,7 @@ int EN = 2;
 unsigned long outDoorResetTimer = millis();
 unsigned long ledDisplayTimer = millis();
 
-unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2120, 2121, 200, 201, 202};
+unsigned short  menuCodes[NUM_MENU_ITEMS] = {2000, 2004, 2100, 2102, 2103, 2110, 2119, 2120, 2121, 200, 201, 202};
 char menu[NUM_MENU_ITEMS][17] = {
   "On or Off   ",
   "Temp Set    ", 
@@ -33,6 +39,7 @@ char menu[NUM_MENU_ITEMS][17] = {
   "Temp H2O >  ", 
   "Temp H2O <   ",
   "Temp Air     ", 
+  "Fan Speed    ",
   "AC Volts    ", 
   "AC Amps     ",
   "Set No Heat Temp",
@@ -135,9 +142,14 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
         lastDebounceTime = millis();
         if (buttons & BUTTON_UP) {
           menuIndex--;
+          if(menuIndex < 0)
+          {
+          menuIndex += NUM_MENU_ITEMS;
+          }
         }
         else if (buttons & BUTTON_DOWN) {
           menuIndex++;
+          menuIndex = menuIndex % NUM_MENU_ITEMS;
         }
         else if (buttons & BUTTON_LEFT) {
           if(menuCodes[menuIndex] == 200)
@@ -202,11 +214,8 @@ if(millis() - outDoorResetTimer > outDoorResetIntervalMinutes * 60000)
             }         
           return;          
         }
-        if(menuIndex < 0)
-          {
-          menuIndex += NUM_MENU_ITEMS;
-          }
-        menuIndex = menuIndex % NUM_MENU_ITEMS;
+        
+        
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(menu[menuIndex]);
