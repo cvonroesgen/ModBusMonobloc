@@ -15,7 +15,7 @@
 #define ON 0x1
 #define NUM_MENU_ITEMS 16
 #define SERIAL_BUFFER_SIZE 16
-#define outDoorResetIntervalMinutes 1
+#define outDoorResetIntervalMinutes 60
 #define lcdLEDDisplayIntervalSeconds 100
 #define NO_HEAT_REQUIRED_TEMP_IN_C 22
 #define NO_HEAT_REQUIRED_HI_LIMIT 25
@@ -28,11 +28,6 @@ enum responseType { SET_RESPONSE,
                     GET_RESPONSE };
 
 enum responseType setOrGet;
-
-enum semaphore { HTTP,
-                 MODBUS };
-
-enum semaphore HTTPorMODBUS = MODBUS;
 
 Adafruit_RGBLCDShield lcd;
 
@@ -47,7 +42,7 @@ unsigned long outDoorResetTimer =
   millis() - (outDoorResetIntervalMinutes * 60000L);
 unsigned long ledDisplayTimer = millis();
 
-const unsigned long dewPointUpdateInterval = 100L * 1000L;
+const unsigned long dewPointUpdateInterval = 3605 * 1000L;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 
 #define COIL_TEMP_FOR_DEFROST_MODE 2038
@@ -151,13 +146,10 @@ int8_t menuIndex = 0;
 
 
 void loop() {
-  /*
-  if (HTTPorMODBUS == HTTP) {
-    requestDewPointFromNWS();
-  } else {
-    */
+
+  requestDewPointFromNWS();
   handleMODBUSandButtons();
-  //}
+
 }
 
 void requestDewPointFromNWS() {
@@ -452,7 +444,6 @@ short parseMonoBusSetHotWaterTempResponse() {
     COP = calcCOP(radiantTemperature, outsideTemp);
     lcd.print("COP ");
     lcd.print(COP);
-    HTTPorMODBUS = HTTP;
     return crc16;
   }
   lcd.print("Reset CRC failed");
@@ -470,7 +461,6 @@ short parseMonoBusSetDewpointResponse() {
     COP = calcCOP(radiantTemperature, outsideTemp);
     lcd.print("COP ");
     lcd.print(COP);
-    HTTPorMODBUS = MODBUS;
     return crc16;
   }
   lcd.print("Reset CRC failed");
