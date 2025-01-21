@@ -149,15 +149,17 @@ unsigned long debounceDelay = 500;
 int loopCounter = 0;
 
 int8_t menuIndex = 0;
+bool whenYouAreReady = false;
+bool doItNow = true;
 
 void loop() {
 
-  requestDewPointFromNWS();
+  requestDewPointFromNWS(whenYouAreReady);
   handleMODBUSandButtons();
 }
 
-void requestDewPointFromNWS() {
-  if (millis() - lastDewPointUpdateTime > dewPointUpdateInterval) {
+void requestDewPointFromNWS(bool whenToDoIt) {
+  if ((millis() - lastDewPointUpdateTime > dewPointUpdateInterval) || whenToDoIt) {
     lastDewPointUpdateTime = millis();
     send_http_request();
   }
@@ -269,6 +271,7 @@ void handleMODBUSandButtons() {
         requestDataFromMonoBus(menuCodes[menuIndex],
                                &displayMonoBusGetResponse);
       } else if (menuCodes[menuIndex] == NWS_DEW_POINT) {
+        requestDewPointFromNWS(doItNow);
         lcd.setCursor(0, 1);
         formatPrint(dewpoint);
         lcd.print("C ");
