@@ -13,7 +13,7 @@
 
 #define OFF 0x0
 #define ON 0x1
-#define NUM_MENU_ITEMS 16
+
 #define SERIAL_BUFFER_SIZE 16
 #define outDoorResetIntervalMinutes 60
 #define lcdLEDDisplayIntervalSeconds 100
@@ -24,8 +24,7 @@
 #define DEGREES_C_TO_RAISE_H20_HI_LIMIT 1.0f
 #define DEGREES_C_TO_RAISE_H20_LO_LIMIT 0.5f
 
-enum responseType { SET_RESPONSE,
-                    GET_RESPONSE };
+enum responseType { SET_RESPONSE, GET_RESPONSE };
 
 enum responseType setOrGet;
 
@@ -39,12 +38,13 @@ unsigned short crc16;
 int led = 13;
 int EN = 2;
 unsigned long outDoorResetTimer =
-  millis() - (outDoorResetIntervalMinutes * 60000L);
+    millis() - (outDoorResetIntervalMinutes * 60000L);
 unsigned long ledDisplayTimer = millis();
 
 const unsigned long dewPointUpdateInterval = 3605 * 1000L;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 
+#define DELTA_AMBIENT_COIL 2040
 #define COIL_TEMP_FOR_DEFROST_MODE 2038
 #define AMBIENT_TEMP 2110
 #define ON_OFF 2000
@@ -62,28 +62,32 @@ unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 #define C_UP_PER_C_DOWN 201
 #define COP_CRC 202
 
-unsigned short menuCodes[NUM_MENU_ITEMS] = { ON_OFF,
-                                             HOT_WATER_SET_POINT,
-                                             WATER_TANK_TEMP,
-                                             Outlet_water_temperature,
-                                             Inlet_water_temperature,
-                                             AMBIENT_TEMP,
-                                             EXT_COIL_TEMP,
-                                             COOL_COIL_TEMP,
-                                             COIL_TEMP_FOR_DEFROST_MODE,
-                                             FAN_SPEED,
-                                             AC_VOLTS,
-                                             AC_AMPS,
-                                             NWS_DEW_POINT,
-                                             NO_HEAT_TEMP_SET,
-                                             C_UP_PER_C_DOWN,
-                                             COP_CRC };
-char menu[NUM_MENU_ITEMS][17] = {
-  "On or Off   ", "Temp Set    ", "Temp Tank   ", "Temp H2O >  ",
-  "Temp H2O <   ", "Temp Air     ", "Temp Ext Coil", "Temp Cool Coil",
-  "Dew Point Set", "Fan Speed    ", "AC Volts    ", "AC Amps     ",
-  "NWS Dew Point", "Set No Heat Temp", "C up per C down", "COP & CRC"
-};
+unsigned short menuCodes[] = {ON_OFF,
+                              HOT_WATER_SET_POINT,
+                              WATER_TANK_TEMP,
+                              Outlet_water_temperature,
+                              Inlet_water_temperature,
+                              AMBIENT_TEMP,
+                              EXT_COIL_TEMP,
+                              COOL_COIL_TEMP,
+                              COIL_TEMP_FOR_DEFROST_MODE,
+                              DELTA_AMBIENT_COIL,
+                              FAN_SPEED,
+                              AC_VOLTS,
+                              AC_AMPS,
+                              NWS_DEW_POINT,
+                              NO_HEAT_TEMP_SET,
+                              C_UP_PER_C_DOWN,
+                              COP_CRC};
+char menu[][17] = {"On or Off   ",    "Temp Set    ",   "Temp Tank   ",
+                   "Temp H2O >  ",    "Temp H2O <   ",  "Temp Air     ",
+                   "Temp Ext Coil",   "Temp Cool Coil", "Dew Point Set",
+                   "Ambient - Coil",  "Fan Speed    ",  "AC Volts    ",
+                   "AC Amps     ",    "NWS Dew Point",  "Set No Heat Temp",
+                   "C up per C down", "COP & CRC"};
+
+const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(short);
+
 short outsideTemp = 0;
 short radiantTemperature = 0;
 float COP = 0;
@@ -91,9 +95,9 @@ float degreesToRaiseH2O = .7;
 int8_t noHeatRequiredTempInC;
 #define SECRET_SSID "121PageBrookRoad"
 #define SECRET_PASS ""
-char ssid[] = SECRET_SSID;  // your network SSID (name)
+char ssid[] = SECRET_SSID; // your network SSID (name)
 char pass[] =
-  SECRET_PASS;  // your network password (use for WPA, or use as key for WEP)
+    SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 
 int status = WL_IDLE_STATUS;
 char server[] = "api.weather.gov";
@@ -124,12 +128,15 @@ void setup() {
   lcd.print("MonoBloc");
 
   EEPROM.get(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
-  if (noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT || noHeatRequiredTempInC < NO_HEAT_REQUIRED_LO_LIMIT) {
+  if (noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT ||
+      noHeatRequiredTempInC < NO_HEAT_REQUIRED_LO_LIMIT) {
     noHeatRequiredTempInC = NO_HEAT_REQUIRED_TEMP_IN_C;
     EEPROM.put(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
   }
   EEPROM.get(0, degreesToRaiseH2O);
-  if (isnan(degreesToRaiseH2O) || degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT || degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT) {
+  if (isnan(degreesToRaiseH2O) ||
+      degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT ||
+      degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT) {
     degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20;
     EEPROM.put(0, degreesToRaiseH2O);
   }
@@ -143,13 +150,10 @@ int loopCounter = 0;
 
 int8_t menuIndex = 0;
 
-
-
 void loop() {
 
   requestDewPointFromNWS();
   handleMODBUSandButtons();
-
 }
 
 void requestDewPointFromNWS() {
@@ -272,7 +276,7 @@ void handleMODBUSandButtons() {
         lcd.print("F");
       } else if (menuCodes[menuIndex] == COP_CRC) {
         lcd.setCursor(0, 1);
-        lcd.print(COP);
+        lcd.print(calcCOP(radiantTemperature, outsideTemp));
         lcd.print(" & ");
         lcd.print(crc16, HEX);
       } else if (menuCodes[menuIndex] == NO_HEAT_TEMP_SET) {
@@ -288,36 +292,35 @@ void handleMODBUSandButtons() {
 
 unsigned short CRC16(byte *nData, unsigned short wLength) {
   static unsigned short wCRCTable[] = {
-    0X0000, 0XC0C1, 0XC181, 0X0140, 0XC301, 0X03C0, 0X0280, 0XC241, 0XC601,
-    0X06C0, 0X0780, 0XC741, 0X0500, 0XC5C1, 0XC481, 0X0440, 0XCC01, 0X0CC0,
-    0X0D80, 0XCD41, 0X0F00, 0XCFC1, 0XCE81, 0X0E40, 0X0A00, 0XCAC1, 0XCB81,
-    0X0B40, 0XC901, 0X09C0, 0X0880, 0XC841, 0XD801, 0X18C0, 0X1980, 0XD941,
-    0X1B00, 0XDBC1, 0XDA81, 0X1A40, 0X1E00, 0XDEC1, 0XDF81, 0X1F40, 0XDD01,
-    0X1DC0, 0X1C80, 0XDC41, 0X1400, 0XD4C1, 0XD581, 0X1540, 0XD701, 0X17C0,
-    0X1680, 0XD641, 0XD201, 0X12C0, 0X1380, 0XD341, 0X1100, 0XD1C1, 0XD081,
-    0X1040, 0XF001, 0X30C0, 0X3180, 0XF141, 0X3300, 0XF3C1, 0XF281, 0X3240,
-    0X3600, 0XF6C1, 0XF781, 0X3740, 0XF501, 0X35C0, 0X3480, 0XF441, 0X3C00,
-    0XFCC1, 0XFD81, 0X3D40, 0XFF01, 0X3FC0, 0X3E80, 0XFE41, 0XFA01, 0X3AC0,
-    0X3B80, 0XFB41, 0X3900, 0XF9C1, 0XF881, 0X3840, 0X2800, 0XE8C1, 0XE981,
-    0X2940, 0XEB01, 0X2BC0, 0X2A80, 0XEA41, 0XEE01, 0X2EC0, 0X2F80, 0XEF41,
-    0X2D00, 0XEDC1, 0XEC81, 0X2C40, 0XE401, 0X24C0, 0X2580, 0XE541, 0X2700,
-    0XE7C1, 0XE681, 0X2640, 0X2200, 0XE2C1, 0XE381, 0X2340, 0XE101, 0X21C0,
-    0X2080, 0XE041, 0XA001, 0X60C0, 0X6180, 0XA141, 0X6300, 0XA3C1, 0XA281,
-    0X6240, 0X6600, 0XA6C1, 0XA781, 0X6740, 0XA501, 0X65C0, 0X6480, 0XA441,
-    0X6C00, 0XACC1, 0XAD81, 0X6D40, 0XAF01, 0X6FC0, 0X6E80, 0XAE41, 0XAA01,
-    0X6AC0, 0X6B80, 0XAB41, 0X6900, 0XA9C1, 0XA881, 0X6840, 0X7800, 0XB8C1,
-    0XB981, 0X7940, 0XBB01, 0X7BC0, 0X7A80, 0XBA41, 0XBE01, 0X7EC0, 0X7F80,
-    0XBF41, 0X7D00, 0XBDC1, 0XBC81, 0X7C40, 0XB401, 0X74C0, 0X7580, 0XB541,
-    0X7700, 0XB7C1, 0XB681, 0X7640, 0X7200, 0XB2C1, 0XB381, 0X7340, 0XB101,
-    0X71C0, 0X7080, 0XB041, 0X5000, 0X90C1, 0X9181, 0X5140, 0X9301, 0X53C0,
-    0X5280, 0X9241, 0X9601, 0X56C0, 0X5780, 0X9741, 0X5500, 0X95C1, 0X9481,
-    0X5440, 0X9C01, 0X5CC0, 0X5D80, 0X9D41, 0X5F00, 0X9FC1, 0X9E81, 0X5E40,
-    0X5A00, 0X9AC1, 0X9B81, 0X5B40, 0X9901, 0X59C0, 0X5880, 0X9841, 0X8801,
-    0X48C0, 0X4980, 0X8941, 0X4B00, 0X8BC1, 0X8A81, 0X4A40, 0X4E00, 0X8EC1,
-    0X8F81, 0X4F40, 0X8D01, 0X4DC0, 0X4C80, 0X8C41, 0X4400, 0X84C1, 0X8581,
-    0X4540, 0X8701, 0X47C0, 0X4680, 0X8641, 0X8201, 0X42C0, 0X4380, 0X8341,
-    0X4100, 0X81C1, 0X8081, 0X4040
-  };
+      0X0000, 0XC0C1, 0XC181, 0X0140, 0XC301, 0X03C0, 0X0280, 0XC241, 0XC601,
+      0X06C0, 0X0780, 0XC741, 0X0500, 0XC5C1, 0XC481, 0X0440, 0XCC01, 0X0CC0,
+      0X0D80, 0XCD41, 0X0F00, 0XCFC1, 0XCE81, 0X0E40, 0X0A00, 0XCAC1, 0XCB81,
+      0X0B40, 0XC901, 0X09C0, 0X0880, 0XC841, 0XD801, 0X18C0, 0X1980, 0XD941,
+      0X1B00, 0XDBC1, 0XDA81, 0X1A40, 0X1E00, 0XDEC1, 0XDF81, 0X1F40, 0XDD01,
+      0X1DC0, 0X1C80, 0XDC41, 0X1400, 0XD4C1, 0XD581, 0X1540, 0XD701, 0X17C0,
+      0X1680, 0XD641, 0XD201, 0X12C0, 0X1380, 0XD341, 0X1100, 0XD1C1, 0XD081,
+      0X1040, 0XF001, 0X30C0, 0X3180, 0XF141, 0X3300, 0XF3C1, 0XF281, 0X3240,
+      0X3600, 0XF6C1, 0XF781, 0X3740, 0XF501, 0X35C0, 0X3480, 0XF441, 0X3C00,
+      0XFCC1, 0XFD81, 0X3D40, 0XFF01, 0X3FC0, 0X3E80, 0XFE41, 0XFA01, 0X3AC0,
+      0X3B80, 0XFB41, 0X3900, 0XF9C1, 0XF881, 0X3840, 0X2800, 0XE8C1, 0XE981,
+      0X2940, 0XEB01, 0X2BC0, 0X2A80, 0XEA41, 0XEE01, 0X2EC0, 0X2F80, 0XEF41,
+      0X2D00, 0XEDC1, 0XEC81, 0X2C40, 0XE401, 0X24C0, 0X2580, 0XE541, 0X2700,
+      0XE7C1, 0XE681, 0X2640, 0X2200, 0XE2C1, 0XE381, 0X2340, 0XE101, 0X21C0,
+      0X2080, 0XE041, 0XA001, 0X60C0, 0X6180, 0XA141, 0X6300, 0XA3C1, 0XA281,
+      0X6240, 0X6600, 0XA6C1, 0XA781, 0X6740, 0XA501, 0X65C0, 0X6480, 0XA441,
+      0X6C00, 0XACC1, 0XAD81, 0X6D40, 0XAF01, 0X6FC0, 0X6E80, 0XAE41, 0XAA01,
+      0X6AC0, 0X6B80, 0XAB41, 0X6900, 0XA9C1, 0XA881, 0X6840, 0X7800, 0XB8C1,
+      0XB981, 0X7940, 0XBB01, 0X7BC0, 0X7A80, 0XBA41, 0XBE01, 0X7EC0, 0X7F80,
+      0XBF41, 0X7D00, 0XBDC1, 0XBC81, 0X7C40, 0XB401, 0X74C0, 0X7580, 0XB541,
+      0X7700, 0XB7C1, 0XB681, 0X7640, 0X7200, 0XB2C1, 0XB381, 0X7340, 0XB101,
+      0X71C0, 0X7080, 0XB041, 0X5000, 0X90C1, 0X9181, 0X5140, 0X9301, 0X53C0,
+      0X5280, 0X9241, 0X9601, 0X56C0, 0X5780, 0X9741, 0X5500, 0X95C1, 0X9481,
+      0X5440, 0X9C01, 0X5CC0, 0X5D80, 0X9D41, 0X5F00, 0X9FC1, 0X9E81, 0X5E40,
+      0X5A00, 0X9AC1, 0X9B81, 0X5B40, 0X9901, 0X59C0, 0X5880, 0X9841, 0X8801,
+      0X48C0, 0X4980, 0X8941, 0X4B00, 0X8BC1, 0X8A81, 0X4A40, 0X4E00, 0X8EC1,
+      0X8F81, 0X4F40, 0X8D01, 0X4DC0, 0X4C80, 0X8C41, 0X4400, 0X84C1, 0X8581,
+      0X4540, 0X8701, 0X47C0, 0X4680, 0X8641, 0X8201, 0X42C0, 0X4380, 0X8341,
+      0X4100, 0X81C1, 0X8081, 0X4040};
 
   byte nTemp;
   unsigned short wCRCWord = 0xFFFF;
@@ -390,7 +393,7 @@ short convertUnSignedByteToSigned(unsigned short uByte) {
 }
 
 void requestDataFromMonoBus(short code, short (*rs485Callback)()) {
-  byte byts[8] = { 1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0 };
+  byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
@@ -416,7 +419,7 @@ void displaySerialReceiveBuffer() {
 }
 
 void setMonoBlocTemperature(short code, short temperature) {
-  byte byts[8] = { 1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0 };
+  byte byts[8] = {1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   byts[4] = temperature >> 8;
   byts[5] = temperature % 256;
   crc16 = CRC16(byts, 6);
@@ -437,16 +440,11 @@ short parseMonoBusSetHotWaterTempResponse() {
   lcd.clear();
   lcd.setCursor(0, 0);
   // Set responses come back with the CRC at byte locations 6 and 7 (zero based)
-  if (checkCRC(SET_RESPONSE)) {
-    lcd.print("Hot water:");
-    lcd.print(radiantTemperature);
+  if (!checkCRC(SET_RESPONSE)) {
+    lcd.print("Hot water set");
     lcd.setCursor(0, 1);
-    COP = calcCOP(radiantTemperature, outsideTemp);
-    lcd.print("COP ");
-    lcd.print(COP);
-    return crc16;
+    lcd.print("Reset CRC failed");
   }
-  lcd.print("Reset CRC failed");
   return crc16;
 }
 
@@ -463,12 +461,15 @@ short parseMonoBusSetDewpointResponse() {
     lcd.print(COP);
     return crc16;
   }
+  lcd.print("Dewpoint set");
+  lcd.setCursor(0, 1);
   lcd.print("Reset CRC failed");
   return crc16;
 }
 
 short calcRadiantFloorTemperature(short outsideTemperature) {
-  return noHeatRequiredTempInC + ((noHeatRequiredTempInC - outsideTemperature) * degreesToRaiseH2O);
+  return noHeatRequiredTempInC +
+         ((noHeatRequiredTempInC - outsideTemperature) * degreesToRaiseH2O);
 }
 
 bool checkCRC(enum responseType setOrGet) {
@@ -476,14 +477,16 @@ bool checkCRC(enum responseType setOrGet) {
     // Set responses come back with the CRC at byte locations 6 and 7 (zero
     // based)
     crc16 = CRC16(serialReceiveBuffer, 6);
-    if (serialReceiveBuffer[6] == (crc16 % 256) && serialReceiveBuffer[7] == (crc16 >> 8)) {
+    if (serialReceiveBuffer[6] == (crc16 % 256) &&
+        serialReceiveBuffer[7] == (crc16 >> 8)) {
       return true;
     }
   } else {
     // Get responses come back with the CRC at byte locations 5 and 6 (zero
     // based)
     crc16 = CRC16(serialReceiveBuffer, 5);
-    if (serialReceiveBuffer[5] == (crc16 % 256) && serialReceiveBuffer[6] == (crc16 >> 8)) {
+    if (serialReceiveBuffer[5] == (crc16 % 256) &&
+        serialReceiveBuffer[6] == (crc16 >> 8)) {
       return true;
     }
   }
@@ -501,7 +504,8 @@ short displayMonoBusGetResponse() {
     }
     lcd.setCursor(0, 1);
     formatPrint(data);
-    if (menuCodes[menuIndex] >= HOT_WATER_SET_POINT && menuCodes[menuIndex] <= AMBIENT_TEMP) {
+    if (menuCodes[menuIndex] >= HOT_WATER_SET_POINT &&
+        menuCodes[menuIndex] <= AMBIENT_TEMP) {
       lcd.print("C ");
       lcd.print((data * 2.2) + 32);
       lcd.print("F");
@@ -539,21 +543,24 @@ float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp,
                      float copHiWaterHiAir, float copHiWaterLowAir,
                      float copLoWaterHiAir, float copLoWaterLowAir) {
   float hiAirMidWaterCOP =
-    copLoWaterLowAir + ((copLoWaterHiAir - copHiWaterHiAir) * (waterTemp - HiWaterTemp) / deltaWater);
+      copLoWaterLowAir + ((copLoWaterHiAir - copHiWaterHiAir) *
+                          (waterTemp - HiWaterTemp) / deltaWater);
   float loWaterMidAirCOP =
-    copLoWaterLowAir + ((copLoWaterHiAir - copLoWaterLowAir) * (airTemp - HiAirTemp) / deltaAir);
+      copLoWaterLowAir +
+      ((copLoWaterHiAir - copLoWaterLowAir) * (airTemp - HiAirTemp) / deltaAir);
   return (hiAirMidWaterCOP + loWaterMidAirCOP) / 2;
 }
 
-int8_t airTemps[] = { 15, 7, 2, -7, -12, -15, -20, -25 };
-int8_t waterTemps[] = { 50, 45, 41, 35, 30, 20 };
-float waterCOPs[7][9] = { { 4.25, 3.5, 2.81, 2.65, 2.41, 2.09, 1.86, 1.32, 1.23 },
-                          { 4.75, 3.68, 2.99, 2.84, 2.65, 2.21, 2.01, 1.57, 1.47 },
-                          { 5.1, 3.92, 3.05, 2.96, 2.87, 2.48, 2.22, 1.73, 1.59 },
-                          { 5.51, 4.15, 3.65, 3.28, 2.94, 2.63, 2.32, 2.01, 1.65 },
-                          { 5.92, 4.76, 4.2, 3.63, 3.2, 2.95, 2.60, 2.17, 1.78 },
-                          { 6.93, 5.43, 4.85, 4.3, 3.7, 3.31, 2.81, 2.48, 2.03 },
-                          { 7.85, 6.30, 5.45, 4.81, 4.27, 3.72, 3.12, 2.79, 2.3 } };
+int8_t airTemps[] = {15, 7, 2, -7, -12, -15, -20, -25};
+int8_t waterTemps[] = {50, 45, 41, 35, 30, 20};
+float waterCOPs[7][9] = {{4.25, 3.5, 2.81, 2.65, 2.41, 2.09, 1.86, 1.32, 1.23},
+                         {4.75, 3.68, 2.99, 2.84, 2.65, 2.21, 2.01, 1.57, 1.47},
+                         {5.1, 3.92, 3.05, 2.96, 2.87, 2.48, 2.22, 1.73, 1.59},
+                         {5.51, 4.15, 3.65, 3.28, 2.94, 2.63, 2.32, 2.01, 1.65},
+                         {5.92, 4.76, 4.2, 3.63, 3.2, 2.95, 2.60, 2.17, 1.78},
+                         {6.93, 5.43, 4.85, 4.3, 3.7, 3.31, 2.81, 2.48, 2.03},
+                         {7.85, 6.30, 5.45, 4.81, 4.27, 3.72, 3.12, 2.79, 2.3}};
+
 float calcCOP(int8_t waterTemp, int8_t airTemp) {
   if (waterTemp >= waterTemps[0]) {
     return cop(waterTemps[0], waterTemp, airTemp, waterTemps[0] - waterTemps[1],
