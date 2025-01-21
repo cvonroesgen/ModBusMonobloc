@@ -33,7 +33,7 @@ Adafruit_RGBLCDShield lcd;
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
 int8_t serialReceiveBufferIndex = 0;
 int bufferComplete = 0;
-short (*serialBufferCallback)();
+void (*serialBufferCallback)();
 unsigned short crc16;
 int led = 13;
 int EN = 2;
@@ -44,8 +44,9 @@ unsigned long ledDisplayTimer = millis();
 const unsigned long dewPointUpdateInterval = 3605 * 1000L;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 
-#define DELTA_AMBIENT_COIL 2040
-#define COIL_TEMP_FOR_DEFROST_MODE 2038
+#define DELTA_AMBIENT_COIL 2040          // Parameter 32
+#define TEMP_TO_EXTEND_DEFROST_TIME 2039 // Parameter 31
+#define COIL_TEMP_FOR_DEFROST_MODE 2038  // Parameter 30
 #define AMBIENT_TEMP 2110
 #define ON_OFF 2000
 #define HOT_WATER_SET_POINT 2004
@@ -71,6 +72,7 @@ unsigned short menuCodes[] = {ON_OFF,
                               EXT_COIL_TEMP,
                               COOL_COIL_TEMP,
                               COIL_TEMP_FOR_DEFROST_MODE,
+                              TEMP_TO_EXTEND_DEFROST_TIME,
                               DELTA_AMBIENT_COIL,
                               FAN_SPEED,
                               AC_VOLTS,
@@ -79,12 +81,12 @@ unsigned short menuCodes[] = {ON_OFF,
                               NO_HEAT_TEMP_SET,
                               C_UP_PER_C_DOWN,
                               COP_CRC};
-char menu[][17] = {"On or Off   ",    "Temp Set    ",   "Temp Tank   ",
-                   "Temp H2O >  ",    "Temp H2O <   ",  "Temp Air     ",
-                   "Temp Ext Coil",   "Temp Cool Coil", "Dew Point Set",
-                   "Ambient - Coil",  "Fan Speed    ",  "AC Volts    ",
-                   "AC Amps     ",    "NWS Dew Point",  "Set No Heat Temp",
-                   "C up per C down", "COP & CRC"};
+char menu[][17] = {"On or Off   ",     "Temp Set    ",    "Temp Tank   ",
+                   "Temp H2O >  ",     "Temp H2O <   ",   "Temp Air     ",
+                   "Temp Ext Coil",    "Temp Cool Coil",  "Dew Point Set",
+                   "Temp to Extend",   "Ambient - Coil",  "Fan Speed    ",
+                   "AC Volts    ",     "AC Amps     ",    "NWS Dew Point",
+                   "Set No Heat Temp", "C up per C down", "COP & CRC"};
 
 const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(short);
 
@@ -102,7 +104,8 @@ char pass[] =
 int status = WL_IDLE_STATUS;
 char server[] = "api.weather.gov";
 WiFiSSLClient client;
-float dewpoint = -40;
+const float dewPointNotFetchedTemp = -40;
+float dewpoint = dewPointNotFetchedTemp;
 bool dewPointFetchedFromNWS = false;
 
 void formatPrint(short number) {
@@ -149,6 +152,7 @@ unsigned long debounceDelay = 500;
 int loopCounter = 0;
 
 int8_t menuIndex = 0;
+short currentCode = 0;
 bool whenYouAreReady = false;
 bool doItNow = true;
 
@@ -159,7 +163,8 @@ void loop() {
 }
 
 void requestDewPointFromNWS(bool whenToDoIt) {
-  if ((millis() - lastDewPointUpdateTime > dewPointUpdateInterval) || whenToDoIt) {
+  if ((millis() - lastDewPointUpdateTime > dewPointUpdateInterval) ||
+      whenToDoIt) {
     lastDewPointUpdateTime = millis();
     send_http_request();
   }
@@ -260,7 +265,16 @@ void handleMODBUSandButtons() {
           lcd.setCursor(0, 1);
           lcd.print(degreesToRaiseH2O);
           lcd.print(" saved");
+        } else if (menuCodes[menuIndex] == COIL_TEMP_FOR_DEFROST_MODE) {
+          if (dewpoint > dewPointNotFetchedTemp) {
+            setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
+          }
+        }else if (menuCodes[menuIndex] == TEMP_TO_EXTEND_DEFROST_TIME) {
+          if (dewpoint > dewPointNotFetchedTemp) {
+            setMonoBlocTemperature(TEMP_TO_EXTEND_DEFROST_TIME, dewpoint);
+          }
         }
+
         return;
       }
 
@@ -395,7 +409,7 @@ short convertUnSignedByteToSigned(unsigned short uByte) {
   }
 }
 
-void requestDataFromMonoBus(short code, short (*rs485Callback)()) {
+void requestDataFromMonoBus(short code, void (*rs485Callback)()) {
   byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
@@ -422,6 +436,7 @@ void displaySerialReceiveBuffer() {
 }
 
 void setMonoBlocTemperature(short code, short temperature) {
+  currentCode = code;
   byte byts[8] = {1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   byts[4] = temperature >> 8;
   byts[5] = temperature % 256;
@@ -430,44 +445,23 @@ void setMonoBlocTemperature(short code, short temperature) {
   byts[7] = crc16 >> 8;
   serialReceiveBufferIndex = 0;
   bufferComplete = 8;
-  if (code == HOT_WATER_SET_POINT) {
-    serialBufferCallback = &parseMonoBusSetHotWaterTempResponse;
-  } else {
-    serialBufferCallback = &parseMonoBusSetDewpointResponse;
-  }
+  serialBufferCallback = &parseMonoBusSetResponse;
   Serial1.write(byts, 8);
   Serial1.flush();
 }
 
-short parseMonoBusSetHotWaterTempResponse() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
+void parseMonoBusSetResponse() {
+
   // Set responses come back with the CRC at byte locations 6 and 7 (zero based)
   if (!checkCRC(SET_RESPONSE)) {
-    lcd.print("Hot water set");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Set Code:");
+    lcd.print(currentCode);
     lcd.setCursor(0, 1);
     lcd.print("Reset CRC failed");
   }
-  return crc16;
-}
-
-short parseMonoBusSetDewpointResponse() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  // Set responses come back with the CRC at byte locations 6 and 7 (zero based)
-  if (checkCRC(SET_RESPONSE)) {
-    lcd.print("Dewpoint:");
-    lcd.print(dewpoint);
-    lcd.setCursor(0, 1);
-    COP = calcCOP(radiantTemperature, outsideTemp);
-    lcd.print("COP ");
-    lcd.print(COP);
-    return crc16;
-  }
-  lcd.print("Dewpoint set");
-  lcd.setCursor(0, 1);
-  lcd.print("Reset CRC failed");
-  return crc16;
+  return;
 }
 
 short calcRadiantFloorTemperature(short outsideTemperature) {
@@ -496,7 +490,7 @@ bool checkCRC(enum responseType setOrGet) {
   return false;
 }
 
-short displayMonoBusGetResponse() {
+void displayMonoBusGetResponse() {
   short data;
   // Get responses come back with the CRC at byte locations 5 and 6 (zero based)
   if (checkCRC(GET_RESPONSE)) {
@@ -521,24 +515,24 @@ short displayMonoBusGetResponse() {
   }
 }
 
-short setRadiantFloorTemperatureCallback() {
+void setRadiantFloorTemperatureCallback() {
   // Get responses come back with the CRC at byte locations 5 and 6 (zero based)
   if (checkCRC(GET_RESPONSE)) {
     outsideTemp = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
   } else {
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("No get out temp");
+    lcd.print("Get outside temp");
     lcd.setCursor(0, 1);
-    lcd.print("crc ");
+    lcd.print("Fail crc");
     lcd.print(crc16, HEX);
-    return 0;
+    return;
   }
   if (outsideTemp > -23 && outsideTemp < 25) {
     radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
     setMonoBlocTemperature(HOT_WATER_SET_POINT, radiantTemperature);
   }
-  return radiantTemperature;
+  return;
 }
 
 float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp,
