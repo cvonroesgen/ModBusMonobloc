@@ -44,6 +44,7 @@ unsigned long ledDisplayTimer = millis();
 const unsigned long dewPointUpdateInterval = 3605 * 1000L;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 
+#define DEFROST_STATUS 2136               // defrost is bit 5
 #define DELTA_AMBIENT_COIL 2040          // Parameter 32
 #define TEMP_TO_EXTEND_DEFROST_TIME 2039 // Parameter 31
 #define COIL_TEMP_FOR_DEFROST_MODE 2038  // Parameter 30
@@ -64,6 +65,7 @@ unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 #define COP_CRC 202
 
 unsigned short menuCodes[] = {ON_OFF,
+                              DEFROST_STATUS,
                               HOT_WATER_SET_POINT,
                               WATER_TANK_TEMP,
                               Outlet_water_temperature,
@@ -81,12 +83,12 @@ unsigned short menuCodes[] = {ON_OFF,
                               NO_HEAT_TEMP_SET,
                               C_UP_PER_C_DOWN,
                               COP_CRC};
-char menu[][17] = {"On or Off   ",     "Temp Set    ",    "Temp Tank   ",
-                   "Temp H2O >  ",     "Temp H2O <   ",   "Temp Air     ",
-                   "Temp Ext Coil",    "Temp Cool Coil",  "Dew Point Set",
-                   "Temp to Extend",   "Ambient - Coil",  "Fan Speed    ",
-                   "AC Volts    ",     "AC Amps     ",    "NWS Dew Point",
-                   "Set No Heat Temp", "C up per C down", "COP & CRC"};
+char menu[][17] = {
+    "On or Off   ",     "Defrost Status  ", "Temp Set    ",   "Temp Tank   ",
+    "Temp H2O >  ",     "Temp H2O <   ",    "Temp Air     ",  "Temp Ext Coil",
+    "Temp Cool Coil",   "Dew Point Set",    "Temp to Extend", "Ambient - Coil",
+    "Fan Speed    ",    "AC Volts    ",     "AC Amps     ",   "NWS Dew Point",
+    "Set No Heat Temp", "C up per C down",  "COP & CRC"};
 
 const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(short);
 
@@ -269,7 +271,7 @@ void handleMODBUSandButtons() {
           if (dewpoint > dewPointNotFetchedTemp) {
             setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
           }
-        }else if (menuCodes[menuIndex] == TEMP_TO_EXTEND_DEFROST_TIME) {
+        } else if (menuCodes[menuIndex] == TEMP_TO_EXTEND_DEFROST_TIME) {
           if (dewpoint > dewPointNotFetchedTemp) {
             setMonoBlocTemperature(TEMP_TO_EXTEND_DEFROST_TIME, dewpoint);
           }
@@ -496,6 +498,8 @@ void displayMonoBusGetResponse() {
   if (checkCRC(GET_RESPONSE)) {
     if (menuCodes[menuIndex] == AC_VOLTS) {
       data = serialReceiveBuffer[4];
+    } else if (menuCodes[menuIndex] == DEFROST_STATUS) {
+      data = (data >> 5) & 1;
     } else {
       data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
     }
