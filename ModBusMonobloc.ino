@@ -104,7 +104,7 @@ char pass[] =
     SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 
 int status = WL_IDLE_STATUS;
-char server[] = "api.weather.gov";
+char NWSserver[] = "api.weather.gov";
 WiFiSSLClient client;
 const float dewPointNotFetchedTemp = -40;
 float dewpoint = dewPointNotFetchedTemp;
@@ -355,7 +355,7 @@ unsigned short CRC16(byte *nData, unsigned short wLength) {
 /* -------------------------------------------------------------------------- */
 void send_http_request() {
 
-  if (client.connect(server, 443)) {
+  if (client.connect(NWSserver, 443)) {
 
     // Make a HTTP request:
     client.println("GET /stations/KBED/observations/latest HTTP/1.1");
