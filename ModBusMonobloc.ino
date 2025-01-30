@@ -11,14 +11,15 @@
 //  byte COOL_COIL_TEMP	03	Cooling coil temperature	Unicode/double
 //  byte
 // Google Script to log data
-// https://script.google.com/macros/s/AKfycbzNOVlU46E1eabSmxcYEMGgYBRLMdBnTi9ttdxgO3Q/dev?name=value&name2=val2
+// https://script.google.com/macros/s/AKfycby5aqlUA9junaFrhdakvVVYDYJccGsa0mIGeRLHS6_5a36PLq5-rx2unjfTYQVAjZEV/exec
 
 #define OFF 0x0
 #define ON 0x1
 
 #define SERIAL_BUFFER_SIZE 16
 #define outDoorResetIntervalMinutes 60
-#define lcdLEDDisplayIntervalSeconds 100
+#define loggingIntervalMinutes 1
+#define lcdLEDDisplayIntervalMinutes 3
 #define NO_HEAT_REQUIRED_TEMP_IN_C 22
 #define NO_HEAT_REQUIRED_HI_LIMIT 25
 #define NO_HEAT_REQUIRED_LO_LIMIT 18
@@ -40,11 +41,14 @@ int led = 13;
 int EN = 2;
 unsigned long outDoorResetTimer =
     millis() - (outDoorResetIntervalMinutes * millisecondsInMinute);
+unsigned long loggingTimer =
+    millis() - (loggingIntervalMinutes * millisecondsInMinute);
 unsigned long ledDisplayTimer = millis();
 
 const unsigned long dewPointUpdateInterval =
     outDoorResetIntervalMinutes * millisecondsInMinute;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
+unsigned long debugTimer = millis();
 
 #define DEFROST_STATUS 2136              // defrost is bit 5
 #define DELTA_AMBIENT_COIL 2040          // Parameter 32
@@ -66,41 +70,33 @@ unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 #define C_UP_PER_C_DOWN 201
 #define COP_CRC 202
 
-unsigned short menuCodes[] = {ON_OFF,
-                              DEFROST_STATUS,
-                              HOT_WATER_SET_POINT,
-                              WATER_TANK_TEMP,
-                              Outlet_water_temperature,
-                              Inlet_water_temperature,
-                              AMBIENT_TEMP,
-                              EXT_COIL_TEMP,
-                              COOL_COIL_TEMP,
-                              COIL_TEMP_FOR_DEFROST_MODE,
-                              TEMP_TO_EXTEND_DEFROST_TIME,
-                              DELTA_AMBIENT_COIL,
-                              FAN_SPEED,
-                              AC_VOLTS,
-                              AC_AMPS,
-                              NWS_DEW_POINT,
-                              NO_HEAT_TEMP_SET,
-                              C_UP_PER_C_DOWN,
-                              COP_CRC};
-char menu[][17] = {
-    "On or Off   ",     "Defrost Status  ", "Temp Set    ",   "Temp Tank   ",
-    "Temp H2O >  ",     "Temp H2O <   ",    "Temp Air     ",  "Temp Ext Coil",
-    "Temp Cool Coil",   "Dew Point Set",    "Temp to Extend", "Ambient - Coil",
-    "Fan Speed    ",    "AC Volts    ",     "AC Amps     ",   "NWS Dew Point",
-    "Set No Heat Temp", "C up per C down",  "COP & CRC"};
+struct menuCode {
+  unsigned short code;
+  char label[17];
+  float value;
+};
 
-const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(short);
+menuCode menuCodes[] = {{ON_OFF, "On or Off   ", 0},
+                        {DEFROST_STATUS, "Defrost Status  ", 0},
+                        {HOT_WATER_SET_POINT, "Temp Set    ", 0},
+                        {WATER_TANK_TEMP, "Temp Tank   ", 0},
+                        {Outlet_water_temperature, "Temp H2O >  ", 0},
+                        {Inlet_water_temperature, "Temp H2O <   ", 0},
+                        {AMBIENT_TEMP, "Temp Air     ", 0},
+                        {EXT_COIL_TEMP, "Temp Ext Coil", 0},
+                        {COOL_COIL_TEMP, "Temp Cool Coil", 0},
+                        {COIL_TEMP_FOR_DEFROST_MODE, "Dew Point Set", 0},
+                        {TEMP_TO_EXTEND_DEFROST_TIME, "Temp to Extend", 0},
+                        {DELTA_AMBIENT_COIL, "Ambient - Coil", 0},
+                        {FAN_SPEED, "Fan Speed    ", 0},
+                        {AC_VOLTS, "AC Volts    ", 0},
+                        {AC_AMPS, "AC Amps     ", 0},
+                        {NWS_DEW_POINT, "NWS Dew Point", -40},
+                        {NO_HEAT_TEMP_SET, "Set No Heat Temp", 0},
+                        {C_UP_PER_C_DOWN, "C up per C down", 0},
+                        {COP_CRC, "COP & CRC", 0}};
 
-char *codeToColumnName(short code) {
-  for (int i = 0; i < NUM_MENU_ITEMS; i++) {
-    if (menuCodes[i] == code) {
-      return menu[i];
-    }
-  }
-}
+const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(menuCode);
 
 char httpData[6000];
 short outsideTemp = 0;
@@ -144,7 +140,7 @@ void formatPrint(short number) {
 int taskInsertionPointer = 0;
 int taskExecutingPointer = 0;
 enum statuses { ACTIVE, READY, COMPLETED };
-#define MAX_TASKS 10
+#define MAX_TASKS 20
 
 struct Task {
   void (*initFunction)(short);
@@ -156,7 +152,8 @@ struct Task {
 
 Task taskQueue[MAX_TASKS];
 
-bool addTask(void (*initFunction)(short), void (*callbackFunction)(), short code) {
+bool addTask(void (*initFunction)(short), void (*callbackFunction)(),
+             short code) {
   if (taskQueue[taskInsertionPointer].status == COMPLETED) {
     taskQueue[taskInsertionPointer].initFunction = initFunction;
     taskQueue[taskInsertionPointer].callbackFunction = callbackFunction;
@@ -176,7 +173,7 @@ void executeTask() {
     taskQueue[taskExecutingPointer].startTime = millis();
     taskQueue[taskExecutingPointer].status = ACTIVE;
     taskQueue[taskExecutingPointer].initFunction(
-          taskQueue[taskExecutingPointer].code);
+        taskQueue[taskExecutingPointer].code);
   } else if (taskQueue[taskExecutingPointer].status == COMPLETED) {
     taskExecutingPointer++;
     taskExecutingPointer = taskExecutingPointer % MAX_TASKS;
@@ -198,12 +195,6 @@ void setup() {
   while (status != WL_CONNECTED) {
     status = WiFi.begin(ssid, pass);
   }
-  Serial1.begin(2400, SERIAL_8E1);
-  pinMode(led, OUTPUT);
-  lcd.begin(16, 2);
-  lcd.print("ModBus");
-  lcd.setCursor(0, 1);
-  lcd.print("MonoBloc");
 
   EEPROM.get(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
   if (noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT ||
@@ -218,15 +209,20 @@ void setup() {
     degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20;
     EEPROM.put(0, degreesToRaiseH2O);
   }
-
-  digitalWrite(led, 1 - digitalRead(led));
+  Serial1.begin(2400, SERIAL_8E1);
+  pinMode(led, OUTPUT);
+  lcd.begin(16, 2);
+  lcd.print("ModBus");
+  lcd.setCursor(0, 1);
+  lcd.print("MonoBloc");
 }
 
 void loop() {
   executeTask();
-  getDewpointFromNWS();
-  readHTTPResponse();
-  handleMODBUSandButtons();
+  putTasksOnQueue();
+  handleHTTPResponse();
+  handleMODBUS();
+  handleButtons();
 }
 
 void getDewpointFromNWS() {
@@ -236,10 +232,7 @@ void getDewpointFromNWS() {
   }
 }
 
-short second() { return (millis() / 1000) % 60; }
-
-void handleMODBUSandButtons() {
-
+void handleMODBUS() {
   while (Serial1.available() > 0) {
     if (serialReceiveBufferIndex < SERIAL_BUFFER_SIZE) {
       serialReceiveBuffer[serialReceiveBufferIndex] = Serial1.read();
@@ -253,9 +246,69 @@ void handleMODBUSandButtons() {
   if (bufferComplete && serialReceiveBufferIndex >= bufferComplete) {
     bufferComplete = 0;
     taskQueue[taskExecutingPointer].callbackFunction();
-    return;
   }
-  short thisSecond = second();
+}
+
+void putTasksOnQueue() {
+  getAmbientTemperature();
+  logData();
+  getDewpointFromNWS();
+}
+
+float getSavedData(short code) {
+  for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+    if (menuCodes[i].code == code) {
+      return menuCodes[i].value;
+    }
+  }
+  return 0;
+}
+
+void logData() {
+  if (millis() - loggingTimer > (loggingIntervalMinutes * millisecondsInMinute)) {
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, DEFROST_STATUS);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
+            Outlet_water_temperature);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
+            Inlet_water_temperature);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, EXT_COIL_TEMP);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, FAN_SPEED);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, AC_AMPS);
+    addTask(&sendDatoToGoogleSheets, &readGoogleScriptResponse, 0);
+    loggingTimer = millis();
+  }
+}
+
+void sendDatoToGoogleSheets(short code) {
+  if (client.connect(googleServer, 443)) {
+    // Make a HTTP request:
+    client.println("POST /macros/s/AKfycby5aqlUA9junaFrhdakvVVYDYJccGsa0mIGeRLHS6_5a36PLq5-rx2unjfTYQVAjZEV/exec HTTP/1.1");
+    client.print("Host: ");
+    client.println(googleServer);
+    client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
+    client.println("Connection: close");
+    client.println();
+    client.print("OutsideTemp=");
+    client.print(outsideTemp);
+    client.print("&Dewpoint=");
+    client.print(dewpoint);
+    client.print("&Defrost=");
+    client.print(getSavedData(DEFROST_STATUS));
+    client.print("&OutletWaterTemp=");
+    client.print(getSavedData(Outlet_water_temperature));
+    client.print("&InletWaterTemp=");
+    client.print(getSavedData(Inlet_water_temperature));
+    client.print("&ExteriorCoilTemp=");
+    client.print(getSavedData(EXT_COIL_TEMP));
+    client.print("&FanSpeed=");
+    client.print(getSavedData(FAN_SPEED));
+    client.print("&ACAmps=");
+    client.print(getSavedData(AC_AMPS));
+    client.println();
+  }
+}
+
+void getAmbientTemperature() {
   if (millis() > ((outDoorResetIntervalMinutes * millisecondsInMinute) +
                   outDoorResetTimer)) {
     addTask(&requestDataFromMonoBus, &setRadiantFloorTemperatureCallback,
@@ -263,16 +316,27 @@ void handleMODBUSandButtons() {
     outDoorResetTimer = millis();
     return;
   }
+}
 
-  if (millis() > ledDisplayTimer + (lcdLEDDisplayIntervalSeconds * 1000)) {
+void toggleLED() {
+  if (millis() - debugTimer > 1000) {
+    digitalWrite(led, 1 - digitalRead(led));
+    debugTimer = millis();
+  }
+}
+
+void handleButtons() {
+
+  if (millis() >
+      ledDisplayTimer + (lcdLEDDisplayIntervalMinutes * millisecondsInMinute)) {
     lcd.setBacklight(OFF);
     ledDisplayTimer = millis();
-    return;
   }
 
   uint8_t buttons = lcd.readButtons();
 
   if (buttons) {
+
     ledDisplayTimer = millis();
     if (millis() > debounceDelay + lastDebounceTime) {
       lcd.setBacklight(ON);
@@ -286,14 +350,14 @@ void handleMODBUSandButtons() {
         menuIndex++;
         menuIndex = menuIndex % NUM_MENU_ITEMS;
       } else if (buttons & BUTTON_LEFT) {
-        if (menuCodes[menuIndex] == NO_HEAT_TEMP_SET) {
+        if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
           noHeatRequiredTempInC--;
           if (noHeatRequiredTempInC < NO_HEAT_REQUIRED_LO_LIMIT) {
             noHeatRequiredTempInC = NO_HEAT_REQUIRED_LO_LIMIT;
           }
           lcd.setCursor(0, 1);
           lcd.print(noHeatRequiredTempInC);
-        } else if (menuCodes[menuIndex] == C_UP_PER_C_DOWN) {
+        } else if (menuCodes[menuIndex].code == C_UP_PER_C_DOWN) {
           degreesToRaiseH2O -= 0.1f;
           if (degreesToRaiseH2O < DEGREES_C_TO_RAISE_H20_LO_LIMIT) {
             degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20_LO_LIMIT;
@@ -303,14 +367,14 @@ void handleMODBUSandButtons() {
         }
         return;
       } else if (buttons & BUTTON_RIGHT) {
-        if (menuCodes[menuIndex] == NO_HEAT_TEMP_SET) {
+        if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
           noHeatRequiredTempInC++;
           if (noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT) {
             noHeatRequiredTempInC = NO_HEAT_REQUIRED_HI_LIMIT;
           }
           lcd.setCursor(0, 1);
           lcd.print(noHeatRequiredTempInC);
-        } else if (menuCodes[menuIndex] == C_UP_PER_C_DOWN) {
+        } else if (menuCodes[menuIndex].code == C_UP_PER_C_DOWN) {
           degreesToRaiseH2O += 0.1f;
           if (degreesToRaiseH2O > DEGREES_C_TO_RAISE_H20_HI_LIMIT) {
             degreesToRaiseH2O = DEGREES_C_TO_RAISE_H20_HI_LIMIT;
@@ -320,25 +384,25 @@ void handleMODBUSandButtons() {
         }
         return;
       } else if (buttons & BUTTON_SELECT) {
-        if (menuCodes[menuIndex] == NO_HEAT_TEMP_SET) {
+        if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
           EEPROM.put(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
           lcd.setCursor(0, 1);
           lcd.print(noHeatRequiredTempInC);
           lcd.print(" saved");
-        } else if (menuCodes[menuIndex] == C_UP_PER_C_DOWN) {
+        } else if (menuCodes[menuIndex].code == C_UP_PER_C_DOWN) {
           EEPROM.put(0, degreesToRaiseH2O);
           lcd.setCursor(0, 1);
           lcd.print(degreesToRaiseH2O);
           lcd.print(" saved");
-        } else if (menuCodes[menuIndex] == COIL_TEMP_FOR_DEFROST_MODE) {
+        } else if (menuCodes[menuIndex].code == COIL_TEMP_FOR_DEFROST_MODE) {
           if (dewpoint > dewPointNotFetchedTemp) {
             setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
           }
-        } else if (menuCodes[menuIndex] == TEMP_TO_EXTEND_DEFROST_TIME) {
+        } else if (menuCodes[menuIndex].code == TEMP_TO_EXTEND_DEFROST_TIME) {
           if (dewpoint > dewPointNotFetchedTemp) {
             setMonoBlocTemperature(TEMP_TO_EXTEND_DEFROST_TIME, dewpoint);
           }
-        } else if (menuCodes[menuIndex] == NWS_DEW_POINT) {
+        } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
           addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
         }
 
@@ -347,24 +411,25 @@ void handleMODBUSandButtons() {
 
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print(menu[menuIndex]);
-      if (menuCodes[menuIndex] >= ON_OFF) {
-        addTask(&requestDataFromMonoBus, &displayModBusGetResponse, menuCodes[menuIndex]);
-      } else if (menuCodes[menuIndex] == NWS_DEW_POINT) {
+      lcd.print(menuCodes[menuIndex].label);
+      if (menuCodes[menuIndex].code >= ON_OFF) {
+        addTask(&requestDataFromMonoBus, &displayModBusGetResponse,
+                menuCodes[menuIndex].code);
+      } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
         lcd.setCursor(0, 1);
         formatPrint(dewpoint);
         lcd.print("C ");
         lcd.print((dewpoint * 2.2) + 32);
         lcd.print("F");
-      } else if (menuCodes[menuIndex] == COP_CRC) {
+      } else if (menuCodes[menuIndex].code == COP_CRC) {
         lcd.setCursor(0, 1);
         lcd.print(calcCOP(radiantTemperature, outsideTemp));
         lcd.print(" & ");
         lcd.print(crc16, HEX);
-      } else if (menuCodes[menuIndex] == NO_HEAT_TEMP_SET) {
+      } else if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
         lcd.setCursor(0, 1);
         lcd.print(noHeatRequiredTempInC);
-      } else if (menuCodes[menuIndex] == C_UP_PER_C_DOWN) {
+      } else if (menuCodes[menuIndex].code == C_UP_PER_C_DOWN) {
         lcd.setCursor(0, 1);
         lcd.print(degreesToRaiseH2O);
       }
@@ -429,23 +494,6 @@ void requestNWSdewpoint(short code) {
   }
 }
 
-void requestForLogging() {
-
-  if (client.connect(googleServer, 443)) {
-    // Make a HTTP request:
-    client.println(
-        "POST /macros/s/AKfycbzNOVlU46E1eabSmxcYEMGgYBRLMdBnTi9ttdxgO3Q/dev "
-        "HTTP/1.1");
-    client.print("Host: ");
-    client.println(googleServer);
-    client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
-    client.println("Connection: close");
-    client.println();
-    client.print("Dewpoint=");
-    client.print(dewpoint);
-  }
-}
-
 void setMonoblocDewpointTemperature(short code) {
   setMonoBlocTemperature(code, dewpoint);
 }
@@ -464,14 +512,21 @@ void readNWSdewpoint() {
     if ((String)apiJSON["properties"]["dewpoint"]["qualityControl"] == "V") {
       dewpoint = (double)apiJSON["properties"]["dewpoint"]["value"];
       taskQueue[taskExecutingPointer].status = COMPLETED;
-      addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse, COIL_TEMP_FOR_DEFROST_MODE);
+      addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
+              COIL_TEMP_FOR_DEFROST_MODE);
     }
   }
 }
 
+void readGoogleScriptResponse() {
+  /* ---------------------------------------------------------------------- */
+
+  taskQueue[taskExecutingPointer].status = COMPLETED;
+}
+
 /* --------------------------------------------------------------------------
  */
-void readHTTPResponse() {
+void handleHTTPResponse() {
   /* --------------------------------------------------------------------------
    */
   uint32_t data_num = 0;
@@ -501,7 +556,7 @@ void readHTTPResponse() {
   lcd.print(data_num);
   lcd.print(" bytes");
   taskQueue[taskExecutingPointer].callbackFunction();
-  }
+}
 
 short convertUnSignedByteToSigned(unsigned short uByte) {
   if (uByte < 128) {
@@ -615,6 +670,33 @@ void displayModBusGetResponse() {
       lcd.print("C ");
       lcd.print((data * 2.2) + 32);
       lcd.print("F");
+    }
+  } else {
+    displaySerialReceiveBuffer();
+    lcd.setCursor(0, 1);
+    lcd.print("crc ");
+    lcd.print(crc16, HEX);
+  }
+  taskQueue[taskExecutingPointer].status = COMPLETED;
+}
+
+void saveModBusGetResponse() {
+  short data;
+  // Get responses come back with the CRC at byte locations 5 and 6 (zero
+  // based)
+  if (checkCRC(GET_RESPONSE)) {
+    if (taskQueue[taskExecutingPointer].code == AC_VOLTS) {
+      data = serialReceiveBuffer[4];
+    } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
+      data = (data >> 5) & 1;
+    } else {
+      data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+    }
+    for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+      if (menuCodes[i].code == taskQueue[taskExecutingPointer].code) {
+        menuCodes[i].value = data;
+        break;
+      }
     }
   } else {
     displaySerialReceiveBuffer();
