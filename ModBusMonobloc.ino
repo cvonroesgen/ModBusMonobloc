@@ -10,6 +10,8 @@
 //  EXT_COIL_TEMP	03	External coil temperature	Unicode/double
 //  byte COOL_COIL_TEMP	03	Cooling coil temperature	Unicode/double
 //  byte
+// Google Script to log data
+// https://script.google.com/macros/s/AKfycbzNOVlU46E1eabSmxcYEMGgYBRLMdBnTi9ttdxgO3Q/dev?name=value&name2=val2
 
 #define OFF 0x0
 #define ON 0x1
@@ -29,22 +31,22 @@ enum responseType { SET_RESPONSE, GET_RESPONSE };
 enum responseType setOrGet;
 
 Adafruit_RGBLCDShield lcd;
-
+const long millisecondsInMinute = 60000L;
 byte serialReceiveBuffer[SERIAL_BUFFER_SIZE];
 int8_t serialReceiveBufferIndex = 0;
 int bufferComplete = 0;
-void (*serialBufferCallback)();
 unsigned short crc16;
 int led = 13;
 int EN = 2;
 unsigned long outDoorResetTimer =
-    millis() - (outDoorResetIntervalMinutes * 60000L);
+    millis() - (outDoorResetIntervalMinutes * millisecondsInMinute);
 unsigned long ledDisplayTimer = millis();
 
-const unsigned long dewPointUpdateInterval = 3605 * 1000L;
+const unsigned long dewPointUpdateInterval =
+    outDoorResetIntervalMinutes * millisecondsInMinute;
 unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 
-#define DEFROST_STATUS 2136               // defrost is bit 5
+#define DEFROST_STATUS 2136              // defrost is bit 5
 #define DELTA_AMBIENT_COIL 2040          // Parameter 32
 #define TEMP_TO_EXTEND_DEFROST_TIME 2039 // Parameter 31
 #define COIL_TEMP_FOR_DEFROST_MODE 2038  // Parameter 30
@@ -92,23 +94,41 @@ char menu[][17] = {
 
 const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(short);
 
+char *codeToColumnName(short code) {
+  for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+    if (menuCodes[i] == code) {
+      return menu[i];
+    }
+  }
+}
+
+char httpData[6000];
 short outsideTemp = 0;
 short radiantTemperature = 0;
 float COP = 0;
 float degreesToRaiseH2O = .7;
 int8_t noHeatRequiredTempInC;
 #define SECRET_SSID "121PageBrookRoad"
-#define SECRET_PASS ""
+#define SECRET_PASS "1254019243"
 char ssid[] = SECRET_SSID; // your network SSID (name)
 char pass[] =
     SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 
 int status = WL_IDLE_STATUS;
-char NWSserver[] = "api.weather.gov";
+const char NWSserver[] = "api.weather.gov";
+const char googleServer[] = "script.google.com";
 WiFiSSLClient client;
 const float dewPointNotFetchedTemp = -40;
 float dewpoint = dewPointNotFetchedTemp;
 bool dewPointFetchedFromNWS = false;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 500;
+int loopCounter = 0;
+
+int8_t menuIndex = 0;
+short currentCode = 0;
+const bool whenYouAreReady = false;
+const bool doItNow = true;
 
 void formatPrint(short number) {
   if (number < 10 && number > 0) {
@@ -120,7 +140,60 @@ void formatPrint(short number) {
   lcd.print(number);
 }
 
+#define TIMEOUT 5000 // Timeout in milliseconds
+int taskInsertionPointer = 0;
+int taskExecutingPointer = 0;
+enum statuses { ACTIVE, READY, COMPLETED };
+#define MAX_TASKS 10
+
+struct Task {
+  void (*initFunction)(short);
+  void (*callbackFunction)();
+  unsigned long startTime;
+  statuses status;
+  short code;
+};
+
+Task taskQueue[MAX_TASKS];
+
+bool addTask(void (*initFunction)(short), void (*callbackFunction)(), short code) {
+  if (taskQueue[taskInsertionPointer].status == COMPLETED) {
+    taskQueue[taskInsertionPointer].initFunction = initFunction;
+    taskQueue[taskInsertionPointer].callbackFunction = callbackFunction;
+    taskQueue[taskInsertionPointer].startTime = millis();
+    taskQueue[taskInsertionPointer].status = READY;
+    taskQueue[taskInsertionPointer].code = code;
+    taskInsertionPointer++;
+    taskInsertionPointer = taskInsertionPointer % MAX_TASKS;
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void executeTask() {
+  if (taskQueue[taskExecutingPointer].status == READY) {
+    taskQueue[taskExecutingPointer].startTime = millis();
+    taskQueue[taskExecutingPointer].status = ACTIVE;
+    taskQueue[taskExecutingPointer].initFunction(
+          taskQueue[taskExecutingPointer].code);
+  } else if (taskQueue[taskExecutingPointer].status == COMPLETED) {
+    taskExecutingPointer++;
+    taskExecutingPointer = taskExecutingPointer % MAX_TASKS;
+  } else if (taskQueue[taskExecutingPointer].status == ACTIVE) {
+    if (millis() - taskQueue[taskExecutingPointer].startTime > TIMEOUT) {
+      taskQueue[taskExecutingPointer].status = COMPLETED;
+      taskExecutingPointer++;
+      taskExecutingPointer = taskExecutingPointer % MAX_TASKS;
+    }
+  }
+}
+
 void setup() {
+
+  for (int i = 0; i < MAX_TASKS; i++) {
+    taskQueue[i].status = COMPLETED;
+  }
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
     status = WiFi.begin(ssid, pass);
@@ -149,33 +222,21 @@ void setup() {
   digitalWrite(led, 1 - digitalRead(led));
 }
 
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 500;
-int loopCounter = 0;
-
-int8_t menuIndex = 0;
-short currentCode = 0;
-bool whenYouAreReady = false;
-bool doItNow = true;
-
 void loop() {
-
-  requestDewPointFromNWS(whenYouAreReady);
+  executeTask();
+  getDewpointFromNWS();
+  readHTTPResponse();
   handleMODBUSandButtons();
 }
 
-void requestDewPointFromNWS(bool whenToDoIt) {
-  if ((millis() - lastDewPointUpdateTime > dewPointUpdateInterval) ||
-      whenToDoIt) {
+void getDewpointFromNWS() {
+  if (millis() - lastDewPointUpdateTime > dewPointUpdateInterval) {
     lastDewPointUpdateTime = millis();
-    send_http_request();
-  }
-  read_http_response();
-  if (dewPointFetchedFromNWS) {
-    setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
-    dewPointFetchedFromNWS = false;
+    addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
   }
 }
+
+short second() { return (millis() / 1000) % 60; }
 
 void handleMODBUSandButtons() {
 
@@ -191,12 +252,14 @@ void handleMODBUSandButtons() {
 
   if (bufferComplete && serialReceiveBufferIndex >= bufferComplete) {
     bufferComplete = 0;
-    (*serialBufferCallback)();
+    taskQueue[taskExecutingPointer].callbackFunction();
     return;
   }
-
-  if (millis() > ((outDoorResetIntervalMinutes * 60000) + outDoorResetTimer)) {
-    requestDataFromMonoBus(AMBIENT_TEMP, &setRadiantFloorTemperatureCallback);
+  short thisSecond = second();
+  if (millis() > ((outDoorResetIntervalMinutes * millisecondsInMinute) +
+                  outDoorResetTimer)) {
+    addTask(&requestDataFromMonoBus, &setRadiantFloorTemperatureCallback,
+            AMBIENT_TEMP);
     outDoorResetTimer = millis();
     return;
   }
@@ -275,6 +338,8 @@ void handleMODBUSandButtons() {
           if (dewpoint > dewPointNotFetchedTemp) {
             setMonoBlocTemperature(TEMP_TO_EXTEND_DEFROST_TIME, dewpoint);
           }
+        } else if (menuCodes[menuIndex] == NWS_DEW_POINT) {
+          addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
         }
 
         return;
@@ -284,10 +349,8 @@ void handleMODBUSandButtons() {
       lcd.setCursor(0, 0);
       lcd.print(menu[menuIndex]);
       if (menuCodes[menuIndex] >= ON_OFF) {
-        requestDataFromMonoBus(menuCodes[menuIndex],
-                               &displayMonoBusGetResponse);
+        addTask(&requestDataFromMonoBus, &displayModBusGetResponse, menuCodes[menuIndex]);
       } else if (menuCodes[menuIndex] == NWS_DEW_POINT) {
-        requestDewPointFromNWS(doItNow);
         lcd.setCursor(0, 1);
         formatPrint(dewpoint);
         lcd.print("C ");
@@ -352,26 +415,66 @@ unsigned short CRC16(byte *nData, unsigned short wLength) {
   return wCRCWord;
 }
 
-/* -------------------------------------------------------------------------- */
-void send_http_request() {
+/* --------------------------------------------------------------------------
+ */
+void requestNWSdewpoint(short code) {
 
   if (client.connect(NWSserver, 443)) {
-
-    // Make a HTTP request:
     client.println("GET /stations/KBED/observations/latest HTTP/1.1");
-    client.println("Host: api.weather.gov");
+    client.print("Host: ");
+    client.println(NWSserver);
     client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
     client.println("Connection: close");
     client.println();
   }
 }
-/* -------------------------------------------------------------------------- */
-void read_http_response() {
+
+void requestForLogging() {
+
+  if (client.connect(googleServer, 443)) {
+    // Make a HTTP request:
+    client.println(
+        "POST /macros/s/AKfycbzNOVlU46E1eabSmxcYEMGgYBRLMdBnTi9ttdxgO3Q/dev "
+        "HTTP/1.1");
+    client.print("Host: ");
+    client.println(googleServer);
+    client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
+    client.println("Connection: close");
+    client.println();
+    client.print("Dewpoint=");
+    client.print(dewpoint);
+  }
+}
+
+void setMonoblocDewpointTemperature(short code) {
+  setMonoBlocTemperature(code, dewpoint);
+}
+
+/* --------------------------------------------------------------------------
+ */
+void readNWSdewpoint() {
+  /* ---------------------------------------------------------------------- */
+
+  JSONVar apiJSON = JSON.parse(httpData);
+  if (JSON.typeof(apiJSON) == "undefined") {
+    return;
+  }
+
+  if (apiJSON.hasOwnProperty("properties")) {
+    if ((String)apiJSON["properties"]["dewpoint"]["qualityControl"] == "V") {
+      dewpoint = (double)apiJSON["properties"]["dewpoint"]["value"];
+      taskQueue[taskExecutingPointer].status = COMPLETED;
+      addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse, COIL_TEMP_FOR_DEFROST_MODE);
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+ */
+void readHTTPResponse() {
   /* --------------------------------------------------------------------------
    */
   uint32_t data_num = 0;
-
-  char jsonData[6000];
   bool inHeader = true;
   while (client.available() && data_num < 6000) {
     while (inHeader) {
@@ -382,27 +485,24 @@ void read_http_response() {
     }
     /* actual data reception */
     char c = client.read();
-    jsonData[data_num++] = c;
+    httpData[data_num++] = c;
   }
 
   if (data_num == 0) {
     return;
   } else {
-    jsonData[data_num] = 0;
+    httpData[data_num] = 0;
   }
   client.stop();
-  JSONVar apiJSON = JSON.parse(jsonData);
-  if (JSON.typeof(apiJSON) == "undefined") {
-    return;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("HTTP Data");
+  lcd.setCursor(0, 1);
+  lcd.print(data_num);
+  lcd.print(" bytes");
+  taskQueue[taskExecutingPointer].callbackFunction();
   }
 
-  if (apiJSON.hasOwnProperty("properties")) {
-    if ((String)apiJSON["properties"]["dewpoint"]["qualityControl"] == "V") {
-      dewpoint = (double)apiJSON["properties"]["dewpoint"]["value"];
-      dewPointFetchedFromNWS = true;
-    }
-  }
-}
 short convertUnSignedByteToSigned(unsigned short uByte) {
   if (uByte < 128) {
     return uByte;
@@ -411,12 +511,11 @@ short convertUnSignedByteToSigned(unsigned short uByte) {
   }
 }
 
-void requestDataFromMonoBus(short code, void (*rs485Callback)()) {
+void requestDataFromMonoBus(short code) {
   byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
   crc16 = CRC16(byts, 6);
   byts[6] = crc16 % 256;
   byts[7] = crc16 >> 8;
-  serialBufferCallback = rs485Callback;
   serialReceiveBufferIndex = 0;
   bufferComplete = 7;
   Serial1.write(byts, 8);
@@ -437,6 +536,10 @@ void displaySerialReceiveBuffer() {
   }
 }
 
+void setMonoBlocDewpoint() {
+  setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
+}
+
 void setMonoBlocTemperature(short code, short temperature) {
   currentCode = code;
   byte byts[8] = {1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
@@ -447,14 +550,14 @@ void setMonoBlocTemperature(short code, short temperature) {
   byts[7] = crc16 >> 8;
   serialReceiveBufferIndex = 0;
   bufferComplete = 8;
-  serialBufferCallback = &parseMonoBusSetResponse;
   Serial1.write(byts, 8);
   Serial1.flush();
 }
 
-void parseMonoBusSetResponse() {
+void parseModBusSetResponse() {
 
-  // Set responses come back with the CRC at byte locations 6 and 7 (zero based)
+  // Set responses come back with the CRC at byte locations 6 and 7 (zero
+  // based)
   if (!checkCRC(SET_RESPONSE)) {
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -463,6 +566,7 @@ void parseMonoBusSetResponse() {
     lcd.setCursor(0, 1);
     lcd.print("Reset CRC failed");
   }
+  taskQueue[taskExecutingPointer].status = COMPLETED;
   return;
 }
 
@@ -492,21 +596,22 @@ bool checkCRC(enum responseType setOrGet) {
   return false;
 }
 
-void displayMonoBusGetResponse() {
+void displayModBusGetResponse() {
   short data;
-  // Get responses come back with the CRC at byte locations 5 and 6 (zero based)
+  // Get responses come back with the CRC at byte locations 5 and 6 (zero
+  // based)
   if (checkCRC(GET_RESPONSE)) {
-    if (menuCodes[menuIndex] == AC_VOLTS) {
+    if (taskQueue[taskExecutingPointer].code == AC_VOLTS) {
       data = serialReceiveBuffer[4];
-    } else if (menuCodes[menuIndex] == DEFROST_STATUS) {
+    } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
     } else {
       data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
     }
     lcd.setCursor(0, 1);
     formatPrint(data);
-    if (menuCodes[menuIndex] >= HOT_WATER_SET_POINT &&
-        menuCodes[menuIndex] <= AMBIENT_TEMP) {
+    if (taskQueue[taskExecutingPointer].code >= HOT_WATER_SET_POINT &&
+        taskQueue[taskExecutingPointer].code <= AMBIENT_TEMP) {
       lcd.print("C ");
       lcd.print((data * 2.2) + 32);
       lcd.print("F");
@@ -517,10 +622,12 @@ void displayMonoBusGetResponse() {
     lcd.print("crc ");
     lcd.print(crc16, HEX);
   }
+  taskQueue[taskExecutingPointer].status = COMPLETED;
 }
 
 void setRadiantFloorTemperatureCallback() {
-  // Get responses come back with the CRC at byte locations 5 and 6 (zero based)
+  // Get responses come back with the CRC at byte locations 5 and 6 (zero
+  // based)
   if (checkCRC(GET_RESPONSE)) {
     outsideTemp = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
   } else {
@@ -530,12 +637,14 @@ void setRadiantFloorTemperatureCallback() {
     lcd.setCursor(0, 1);
     lcd.print("Fail crc");
     lcd.print(crc16, HEX);
+    taskQueue[taskExecutingPointer].status = COMPLETED;
     return;
   }
   if (outsideTemp > -23 && outsideTemp < 25) {
     radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
     setMonoBlocTemperature(HOT_WATER_SET_POINT, radiantTemperature);
   }
+  taskQueue[taskExecutingPointer].status = COMPLETED;
   return;
 }
 
