@@ -297,7 +297,8 @@ void sendDatoToGoogleSheets(short code) {
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "InletWaterTemp", getSavedData(Inlet_water_temperature));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ExteriorCoilTemp", getSavedData(EXT_COIL_TEMP));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "FanSpeed", getSavedData(FAN_SPEED));
-    offset += sprintf(postbuffer + offset, "\"%s\":%.2f}", "ACAmps", getSavedData(AC_AMPS));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ACAmps", getSavedData(AC_AMPS));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f}", "TemperatureSetPoint", radiantTemperature);
     client.println("POST /macros/s/AKfycbyn5LfGotefyp8gp0_AP1Z9V2bO565uR3qoGofKCa6OCWXk2uuRFka8ZZXS-oxmwvvs/exec HTTP/1.1");
     client.print("Host: ");
     client.println(googleServer);
