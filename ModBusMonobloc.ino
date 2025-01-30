@@ -280,31 +280,33 @@ void logData() {
 }
 
 void sendDatoToGoogleSheets(short code) {
+  if (client.connected()) {
+    client.stop(); // Disconnect from the current server
+  }
   if (client.connect(googleServer, 443)) {
     // Make a HTTP request:
-    client.println("POST /macros/s/AKfycby5aqlUA9junaFrhdakvVVYDYJccGsa0mIGeRLHS6_5a36PLq5-rx2unjfTYQVAjZEV/exec HTTP/1.1");
+    char postbuffer[256];
+  int offset = 0;
+
+  // Assemble the string
+ 
+    offset += sprintf(postbuffer + offset, "{\"%s\":%.2f,", "OutsideTemp", outsideTemp);
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", dewpoint);
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "OutletWaterTemp", getSavedData(Outlet_water_temperature));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "InletWaterTemp", getSavedData(Inlet_water_temperature));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ExteriorCoilTemp", getSavedData(EXT_COIL_TEMP));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "FanSpeed", getSavedData(FAN_SPEED));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f}", "ACAmps", getSavedData(AC_AMPS));
+    client.println("POST /macros/s/AKfycbyn5LfGotefyp8gp0_AP1Z9V2bO565uR3qoGofKCa6OCWXk2uuRFka8ZZXS-oxmwvvs/exec HTTP/1.1");
     client.print("Host: ");
     client.println(googleServer);
     client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
+    client.print("Content-length: ");
+    client.println(strlen(postbuffer));
     client.println("Connection: close");
     client.println();
-    client.print("OutsideTemp=");
-    client.print(outsideTemp);
-    client.print("&Dewpoint=");
-    client.print(dewpoint);
-    client.print("&Defrost=");
-    client.print(getSavedData(DEFROST_STATUS));
-    client.print("&OutletWaterTemp=");
-    client.print(getSavedData(Outlet_water_temperature));
-    client.print("&InletWaterTemp=");
-    client.print(getSavedData(Inlet_water_temperature));
-    client.print("&ExteriorCoilTemp=");
-    client.print(getSavedData(EXT_COIL_TEMP));
-    client.print("&FanSpeed=");
-    client.print(getSavedData(FAN_SPEED));
-    client.print("&ACAmps=");
-    client.print(getSavedData(AC_AMPS));
-    client.println();
+    client.println(postbuffer);
   }
 }
 
@@ -483,7 +485,9 @@ unsigned short CRC16(byte *nData, unsigned short wLength) {
 /* --------------------------------------------------------------------------
  */
 void requestNWSdewpoint(short code) {
-
+if (client.connected()) {
+    client.stop(); // Disconnect from the current server
+  }
   if (client.connect(NWSserver, 443)) {
     client.println("GET /stations/KBED/observations/latest HTTP/1.1");
     client.print("Host: ");
