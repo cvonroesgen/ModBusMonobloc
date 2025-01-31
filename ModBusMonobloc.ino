@@ -667,7 +667,7 @@ void displayModBusGetResponse() {
     } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
     } else {
-      data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
     }
     lcd.setCursor(0, 1);
     formatPrint(data);
@@ -696,7 +696,7 @@ void saveModBusGetResponse() {
     } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
     } else {
-      data = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
     }
     for (int i = 0; i < NUM_MENU_ITEMS; i++) {
       if (menuCodes[i].code == taskQueue[taskExecutingPointer].code) {
@@ -717,7 +717,7 @@ void setRadiantFloorTemperatureCallback() {
   // Get responses come back with the CRC at byte locations 5 and 6 (zero
   // based)
   if (checkCRC(GET_RESPONSE)) {
-    outsideTemp = convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+    outsideTemp = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
   } else {
     lcd.clear();
     lcd.setCursor(0, 0);
