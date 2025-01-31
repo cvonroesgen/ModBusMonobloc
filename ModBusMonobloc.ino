@@ -291,7 +291,7 @@ void sendDatoToGoogleSheets(short code) {
 
   // Assemble the string
  
-    offset += sprintf(postbuffer + offset, "{\"%s\":%.2f,", "OutsideTemp", outsideTemp);
+    offset += sprintf(postbuffer + offset, "{\"%s\":%hd,", "OutsideTemp", outsideTemp);
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", dewpoint);
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "OutletWaterTemp", getSavedData(Outlet_water_temperature));
