@@ -1,7 +1,7 @@
 #include "WiFiSSLClient.h"
 #include <Adafruit_RGBLCDShield.h>
 #include <EEPROM.h>
-
+#include <WDT.h>
 #include "WiFiS3.h"
 #include <Arduino_JSON.h>
 // to do https://api.weather.gov/stations/KBED/observations/latest
@@ -185,9 +185,8 @@ void executeTask() {
     }
   }
 }
-
+const long wdtInterval = 8192;
 void setup() {
-
   for (int i = 0; i < MAX_TASKS; i++) {
     taskQueue[i].status = COMPLETED;
   }
@@ -215,9 +214,11 @@ void setup() {
   lcd.print("ModBus");
   lcd.setCursor(0, 1);
   lcd.print("MonoBloc");
+   WDT.begin(wdtInterval);
 }
 
 void loop() {
+  WDT.refresh();
   executeTask();
   putTasksOnQueue();
   handleHTTPResponse();
