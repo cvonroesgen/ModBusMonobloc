@@ -99,8 +99,6 @@ menuCode menuCodes[] = {{ON_OFF, "On or Off   ", 0},
 const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(menuCode);
 
 char httpData[6000];
-short outsideTemp = 0;
-short radiantTemperature = 0;
 float COP = 0;
 float degreesToRaiseH2O = .7;
 int8_t noHeatRequiredTempInC;
@@ -288,7 +286,7 @@ void sendDatoToGoogleSheets(short code) {
 
   // Assemble the string
  
-    offset += sprintf(postbuffer + offset, "{\"%s\":%hd,", "OutsideTemp", outsideTemp);
+    offset += sprintf(postbuffer + offset, "{\"%s\":%hd,", "OutsideTemp", getSavedData(AMBIENT_TEMP));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", dewpoint);
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "OutletWaterTemp", getSavedData(Outlet_water_temperature));
@@ -296,7 +294,7 @@ void sendDatoToGoogleSheets(short code) {
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ExteriorCoilTemp", getSavedData(EXT_COIL_TEMP));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "FanSpeed", getSavedData(FAN_SPEED));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ACAmps", getSavedData(AC_AMPS));
-    offset += sprintf(postbuffer + offset, "\"%s\":%hd}", "TemperatureSetPoint", radiantTemperature);
+    offset += sprintf(postbuffer + offset, "\"%s\":%hd}", "TemperatureSetPoint", getSavedData(HOT_WATER_SET_POINT));
     client.println("POST /macros/s/AKfycbyn5LfGotefyp8gp0_AP1Z9V2bO565uR3qoGofKCa6OCWXk2uuRFka8ZZXS-oxmwvvs/exec HTTP/1.1");
     client.print("Host: ");
     client.println(googleServer);
@@ -427,7 +425,7 @@ void handleButtons() {
         lcd.print("F");
       } else if (menuCodes[menuIndex].code == COP_CRC) {
         lcd.setCursor(0, 1);
-        lcd.print(calcCOP(radiantTemperature, outsideTemp));
+        lcd.print(calcCOP(getSavedData(HOT_WATER_SET_POINT), getSavedData(AMBIENT_TEMP)));
         lcd.print(" & ");
         lcd.print(crc16, HEX);
       } else if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
