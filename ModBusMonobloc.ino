@@ -286,7 +286,7 @@ void sendDatoToGoogleSheets(short code) {
 
   // Assemble the string
  
-    offset += sprintf(postbuffer + offset, "{\"%s\":%hd,", "OutsideTemp", getSavedData(AMBIENT_TEMP));
+    offset += sprintf(postbuffer + offset, "{\"%s\":%.2f,", "OutsideTemp", getSavedData(AMBIENT_TEMP));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", dewpoint);
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "OutletWaterTemp", getSavedData(Outlet_water_temperature));
@@ -294,7 +294,7 @@ void sendDatoToGoogleSheets(short code) {
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ExteriorCoilTemp", getSavedData(EXT_COIL_TEMP));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "FanSpeed", getSavedData(FAN_SPEED));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ACAmps", getSavedData(AC_AMPS));
-    offset += sprintf(postbuffer + offset, "\"%s\":%hd}", "TemperatureSetPoint", getSavedData(HOT_WATER_SET_POINT));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f}", "TemperatureSetPoint", getSavedData(HOT_WATER_SET_POINT));
     client.println("POST /macros/s/AKfycbyn5LfGotefyp8gp0_AP1Z9V2bO565uR3qoGofKCa6OCWXk2uuRFka8ZZXS-oxmwvvs/exec HTTP/1.1");
     client.print("Host: ");
     client.println(googleServer);
@@ -666,10 +666,9 @@ void saveModBusGetResponse() {
   // Get responses come back with the CRC at byte locations 5 and 6 (zero
   // based)
   if (checkCRC(GET_RESPONSE)) {
+    data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; 
     if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
-    } else {
-      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; 
     }
     for (int i = 0; i < NUM_MENU_ITEMS; i++) {
       if (menuCodes[i].code == taskQueue[taskExecutingPointer].code) {
