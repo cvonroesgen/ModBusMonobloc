@@ -51,6 +51,7 @@ unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
 unsigned long debugTimer = millis();
 
 #define DEFROST_STATUS 2136              // defrost is bit 5
+#define HEATER_STATUS 2135              // heater is bit 7
 #define DELTA_AMBIENT_COIL 2040          // Parameter 32
 #define TEMP_TO_EXTEND_DEFROST_TIME 2039 // Parameter 31
 #define COIL_TEMP_FOR_DEFROST_MODE 2038  // Parameter 30
@@ -78,6 +79,7 @@ struct menuCode {
 
 menuCode menuCodes[] = {{ON_OFF, "On or Off   ", 0},
                         {DEFROST_STATUS, "Defrost Status  ", 0},
+                        {HEATER_STATUS, "Heater Status  ", 0},
                         {HOT_WATER_SET_POINT, "Temp Set    ", 0},
                         {WATER_TANK_TEMP, "Temp Tank   ", 0},
                         {Outlet_water_temperature, "Temp H2O >  ", 0},
@@ -112,8 +114,6 @@ int status = WL_IDLE_STATUS;
 const char NWSserver[] = "api.weather.gov";
 const char googleServer[] = "script.google.com";
 WiFiSSLClient client;
-const float dewPointNotFetchedTemp = -40;
-float dewpoint = dewPointNotFetchedTemp;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 500;
 
@@ -263,6 +263,7 @@ float getSavedData(short code) {
 void logData() {
   if (millis() - loggingTimer > (loggingIntervalMinutes * (millisecondsInMinute + 2000))) {
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, DEFROST_STATUS);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, HEATER_STATUS);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
             Outlet_water_temperature);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
@@ -287,8 +288,9 @@ void sendDatoToGoogleSheets(short code) {
   // Assemble the string
  
     offset += sprintf(postbuffer + offset, "{\"%s\":%.2f,", "OutsideTemp", getSavedData(AMBIENT_TEMP));
-    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", dewpoint);
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Heater", getSavedData(HEATER_STATUS));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "OutletWaterTemp", getSavedData(Outlet_water_temperature));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "InletWaterTemp", getSavedData(Inlet_water_temperature));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "ExteriorCoilTemp", getSavedData(EXT_COIL_TEMP));
@@ -395,16 +397,12 @@ void handleButtons() {
           lcd.setCursor(0, 1);
           lcd.print(degreesToRaiseH2O);
           lcd.print(" saved");
-        } else if (menuCodes[menuIndex].code == COIL_TEMP_FOR_DEFROST_MODE) {
-          if (dewpoint > dewPointNotFetchedTemp) {
+        } else if (menuCodes[menuIndex].code == COIL_TEMP_FOR_DEFROST_MODE) {          
             addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               COIL_TEMP_FOR_DEFROST_MODE);
-          }
-        } else if (menuCodes[menuIndex].code == TEMP_TO_EXTEND_DEFROST_TIME) {
-          if (dewpoint > dewPointNotFetchedTemp) {
+        } else if (menuCodes[menuIndex].code == TEMP_TO_EXTEND_DEFROST_TIME) {          
             addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               TEMP_TO_EXTEND_DEFROST_TIME);
-          }
         } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
           addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
         }
@@ -419,9 +417,9 @@ void handleButtons() {
                 menuCodes[menuIndex].code);
       } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
         lcd.setCursor(0, 1);
-        formatPrint(dewpoint);
+        formatPrint(getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
         lcd.print("C ");
-        lcd.print((dewpoint * 2.2) + 32);
+        lcd.print((getSavedData(COIL_TEMP_FOR_DEFROST_MODE) * 2.2) + 32);
         lcd.print("F");
       } else if (menuCodes[menuIndex].code == COP_CRC) {
         lcd.setCursor(0, 1);
@@ -503,7 +501,7 @@ void setMonoBlocHotWaterTemperature(short code) {
 }
 
 void setMonoblocDewpointTemperature(short code) {
-  setMonoBlocTemperature(code, dewpoint);
+  setMonoBlocTemperature(code, getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
 }
 
 /* --------------------------------------------------------------------------
@@ -518,7 +516,7 @@ void readNWSdewpoint() {
 
   if (apiJSON.hasOwnProperty("properties")) {
     if ((String)apiJSON["properties"]["dewpoint"]["qualityControl"] == "V") {
-      dewpoint = (double)apiJSON["properties"]["dewpoint"]["value"];
+      saveData((double)apiJSON["properties"]["dewpoint"]["value"], COIL_TEMP_FOR_DEFROST_MODE);
       taskQueue[taskExecutingPointer].status = COMPLETED;
       addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               COIL_TEMP_FOR_DEFROST_MODE);
@@ -661,6 +659,16 @@ void displayModBusGetResponse() {
   } 
 }
 
+void saveData(short data, short code) {
+  for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+    if (menuCodes[i].code == code) {
+      menuCodes[i].value = data;
+      break;
+    }
+  }
+}
+
+
 void saveModBusGetResponse() {
   short data;
   // Get responses come back with the CRC at byte locations 5 and 6 (zero
@@ -669,13 +677,10 @@ void saveModBusGetResponse() {
     data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; 
     if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
+    }else if (taskQueue[taskExecutingPointer].code == HEATER_STATUS) {
+      data = (data >> 7) & 1;
     }
-    for (int i = 0; i < NUM_MENU_ITEMS; i++) {
-      if (menuCodes[i].code == taskQueue[taskExecutingPointer].code) {
-        menuCodes[i].value = data;
-        break;
-      }
-    }
+    saveData(data, taskQueue[taskExecutingPointer].code);
   } else {
     displaySerialReceiveBuffer();
     lcd.setCursor(0, 1);
