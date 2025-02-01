@@ -116,15 +116,12 @@ const char googleServer[] = "script.google.com";
 WiFiSSLClient client;
 const float dewPointNotFetchedTemp = -40;
 float dewpoint = dewPointNotFetchedTemp;
-bool dewPointFetchedFromNWS = false;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 500;
-int loopCounter = 0;
 
 int8_t menuIndex = 0;
 short currentCode = 0;
-const bool whenYouAreReady = false;
-const bool doItNow = true;
+
 
 void formatPrint(short number) {
   if (number < 10 && number > 0) {
@@ -251,7 +248,7 @@ void handleMODBUS() {
 }
 
 void putTasksOnQueue() {
-  getAmbientTemperature();
+  setHotWaterTemperature();
   logData();
   getDewpointFromNWS();
 }
@@ -266,7 +263,7 @@ float getSavedData(short code) {
 }
 
 void logData() {
-  if (millis() - loggingTimer > (loggingIntervalMinutes * millisecondsInMinute)) {
+  if (millis() - loggingTimer > (loggingIntervalMinutes * (millisecondsInMinute + 2000))) {
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, DEFROST_STATUS);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
             Outlet_water_temperature);
@@ -312,11 +309,13 @@ void sendDatoToGoogleSheets(short code) {
   }
 }
 
-void getAmbientTemperature() {
+void setHotWaterTemperature() {
   if (millis() > ((outDoorResetIntervalMinutes * millisecondsInMinute) +
                   outDoorResetTimer)) {
-    addTask(&requestDataFromMonoBus, &setRadiantFloorTemperatureCallback,
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
             AMBIENT_TEMP);
+    addTask(&setMonoBlocHotWaterTemperature, &parseModBusSetResponse,
+            HOT_WATER_SET_POINT);
     outDoorResetTimer = millis();
     return;
   }
@@ -400,16 +399,17 @@ void handleButtons() {
           lcd.print(" saved");
         } else if (menuCodes[menuIndex].code == COIL_TEMP_FOR_DEFROST_MODE) {
           if (dewpoint > dewPointNotFetchedTemp) {
-            setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
+            addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
+              COIL_TEMP_FOR_DEFROST_MODE);
           }
         } else if (menuCodes[menuIndex].code == TEMP_TO_EXTEND_DEFROST_TIME) {
           if (dewpoint > dewPointNotFetchedTemp) {
-            setMonoBlocTemperature(TEMP_TO_EXTEND_DEFROST_TIME, dewpoint);
+            addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
+              TEMP_TO_EXTEND_DEFROST_TIME);
           }
         } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
           addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
         }
-
         return;
       }
 
@@ -500,6 +500,10 @@ if (client.connected()) {
   }
 }
 
+void setMonoBlocHotWaterTemperature(short code) {  
+  setMonoBlocTemperature(code, calcRadiantFloorTemperature(getSavedData(AMBIENT_TEMP)));
+}
+
 void setMonoblocDewpointTemperature(short code) {
   setMonoBlocTemperature(code, dewpoint);
 }
@@ -564,13 +568,6 @@ void handleHTTPResponse() {
   taskQueue[taskExecutingPointer].callbackFunction();
 }
 
-short convertUnSignedByteToSigned(unsigned short uByte) {
-  if (uByte < 128) {
-    return uByte;
-  } else {
-    return uByte - 256;
-  }
-}
 
 void requestDataFromMonoBus(short code) {
   byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
@@ -595,10 +592,6 @@ void displaySerialReceiveBuffer() {
     }
     lcd.print(serialReceiveBuffer[i], HEX);
   }
-}
-
-void setMonoBlocDewpoint() {
-  setMonoBlocTemperature(COIL_TEMP_FOR_DEFROST_MODE, dewpoint);
 }
 
 void setMonoBlocTemperature(short code, short temperature) {
@@ -658,32 +651,16 @@ bool checkCRC(enum responseType setOrGet) {
 }
 
 void displayModBusGetResponse() {
-  short data;
-  // Get responses come back with the CRC at byte locations 5 and 6 (zero
-  // based)
-  if (checkCRC(GET_RESPONSE)) {
-    if (taskQueue[taskExecutingPointer].code == AC_VOLTS) {
-      data = serialReceiveBuffer[4];
-    } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
-      data = (data >> 5) & 1;
-    } else {
-      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
-    }
-    lcd.setCursor(0, 1);
-    formatPrint(data);
-    if (taskQueue[taskExecutingPointer].code >= HOT_WATER_SET_POINT &&
-        taskQueue[taskExecutingPointer].code <= AMBIENT_TEMP) {
-      lcd.print("C ");
-      lcd.print((data * 2.2) + 32);
-      lcd.print("F");
-    }
-  } else {
-    displaySerialReceiveBuffer();
-    lcd.setCursor(0, 1);
-    lcd.print("crc ");
-    lcd.print(crc16, HEX);
-  }
-  taskQueue[taskExecutingPointer].status = COMPLETED;
+  saveModBusGetResponse();
+  short data = getSavedData(taskQueue[taskExecutingPointer].code);
+  lcd.setCursor(0, 1);
+  formatPrint(data);
+  if (taskQueue[taskExecutingPointer].code >= HOT_WATER_SET_POINT &&
+      taskQueue[taskExecutingPointer].code <= AMBIENT_TEMP) {
+    lcd.print("C ");
+    lcd.print((data * 2.2) + 32);
+    lcd.print("F");
+  } 
 }
 
 void saveModBusGetResponse() {
@@ -691,12 +668,10 @@ void saveModBusGetResponse() {
   // Get responses come back with the CRC at byte locations 5 and 6 (zero
   // based)
   if (checkCRC(GET_RESPONSE)) {
-    if (taskQueue[taskExecutingPointer].code == AC_VOLTS) {
-      data = serialReceiveBuffer[4];
-    } else if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
+    if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
       data = (data >> 5) & 1;
     } else {
-      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
+      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; 
     }
     for (int i = 0; i < NUM_MENU_ITEMS; i++) {
       if (menuCodes[i].code == taskQueue[taskExecutingPointer].code) {
@@ -711,29 +686,6 @@ void saveModBusGetResponse() {
     lcd.print(crc16, HEX);
   }
   taskQueue[taskExecutingPointer].status = COMPLETED;
-}
-
-void setRadiantFloorTemperatureCallback() {
-  // Get responses come back with the CRC at byte locations 5 and 6 (zero
-  // based)
-  if (checkCRC(GET_RESPONSE)) {
-    outsideTemp = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; //convertUnSignedByteToSigned(serialReceiveBuffer[4]);
-  } else {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Get outside temp");
-    lcd.setCursor(0, 1);
-    lcd.print("Fail crc");
-    lcd.print(crc16, HEX);
-    taskQueue[taskExecutingPointer].status = COMPLETED;
-    return;
-  }
-  if (outsideTemp > -23 && outsideTemp < 25) {
-    radiantTemperature = calcRadiantFloorTemperature(outsideTemp);
-    setMonoBlocTemperature(HOT_WATER_SET_POINT, radiantTemperature);
-  }
-  taskQueue[taskExecutingPointer].status = COMPLETED;
-  return;
 }
 
 float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp,
