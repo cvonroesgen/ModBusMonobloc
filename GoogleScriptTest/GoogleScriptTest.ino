@@ -268,34 +268,38 @@ void readGoogleScriptResponse() {
   taskQueue[taskExecutingPointer].status = COMPLETED;
 }
 
+uint32_t httpHeaderPointer = 0;
+bool inHTTPheaders = true;
 /* --------------------------------------------------------------------------
  */
 void handleHTTPResponse() {
   /* --------------------------------------------------------------------------
    */
-  uint32_t data_num = 0;
-  bool inHeader = true;
-  while (client.available() && data_num < 6000) {
-    while (inHeader) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") {
-        inHeader = false;
-      }
-    }
-    /* actual data reception */
-    char c = client.read();
-    httpData[data_num++] = c;
-  }
 
-  if (data_num == 0) {
-    return;
+  if (client.available() && httpHeaderPointer < sizeof(httpData) - 1) {
+    if (inHTTPheaders) {
+      String line = client.readStringUntil('\n');
+      Serial.println(line);
+      if (line == "\r") {
+        inHTTPheaders = false;
+      }
+    } else { /* actual data reception */
+      char c = client.read();
+      httpData[httpHeaderPointer++] = c;
+    }
   } else {
-    httpData[data_num] = 0;
+    if (httpHeaderPointer == 0) {
+      return;
+    } else {
+      httpData[httpHeaderPointer] = 0;
+    }
+    client.stop();
+    
+    httpHeaderPointer = 0;
+    inHTTPheaders = true;
+    Serial.print(httpData);
+    taskQueue[taskExecutingPointer].callbackFunction();
   }
-  client.stop();
-  Serial.println("Received data to Google Sheets");
-  Serial.print(httpData);
-  taskQueue[taskExecutingPointer].callbackFunction();
 }
 
 short convertUnSignedByteToSigned(unsigned short uByte) {

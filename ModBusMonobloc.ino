@@ -530,40 +530,42 @@ void readGoogleScriptResponse() {
   taskQueue[taskExecutingPointer].status = COMPLETED;
 }
 
+uint32_t httpHeaderPointer = 0;
+bool inHTTPheaders = true;
 /* --------------------------------------------------------------------------
  */
 void handleHTTPResponse() {
   /* --------------------------------------------------------------------------
    */
-  uint32_t data_num = 0;
-  bool inHeader = true;
-  while (client.available() && data_num < 6000) {
-    while (inHeader) {
+
+  if (client.available() && httpHeaderPointer < sizeof(httpData) - 1) {
+    if (inHTTPheaders) {
       String line = client.readStringUntil('\n');
       if (line == "\r") {
-        inHeader = false;
+        inHTTPheaders = false;
       }
+    } else { /* actual data reception */
+      char c = client.read();
+      httpData[httpHeaderPointer++] = c;
     }
-    /* actual data reception */
-    char c = client.read();
-    httpData[data_num++] = c;
-  }
-
-  if (data_num == 0) {
-    return;
   } else {
-    httpData[data_num] = 0;
+    if (httpHeaderPointer == 0) {
+      return;
+    } else {
+      httpData[httpHeaderPointer] = 0;
+    }
+    client.stop();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("HTTP Data");
+    lcd.setCursor(0, 1);
+    lcd.print(httpHeaderPointer);
+    lcd.print(" bytes");
+    httpHeaderPointer = 0;
+    inHTTPheaders = true;
+    taskQueue[taskExecutingPointer].callbackFunction();
   }
-  client.stop();
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("HTTP Data");
-  lcd.setCursor(0, 1);
-  lcd.print(data_num);
-  lcd.print(" bytes");
-  taskQueue[taskExecutingPointer].callbackFunction();
 }
-
 
 void requestDataFromMonoBus(short code) {
   byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
