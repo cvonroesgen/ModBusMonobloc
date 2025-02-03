@@ -66,6 +66,7 @@ unsigned long debugTimer = millis();
 #define FAN_SPEED 2119
 #define AC_VOLTS 2120
 #define AC_AMPS 2121
+#define NWS_TEMPERATURE 198
 #define NWS_DEW_POINT 199
 #define NO_HEAT_TEMP_SET 200
 #define C_UP_PER_C_DOWN 201
@@ -94,6 +95,7 @@ menuCode menuCodes[] = {{ON_OFF, "On or Off   ", 0},
                         {AC_VOLTS, "AC Volts    ", 0},
                         {AC_AMPS, "AC Amps     ", 0},
                         {NWS_DEW_POINT, "NWS Dew Point", -40},
+                        {NWS_TEMPERATURE, "NWS Temperature", -40},
                         {NO_HEAT_TEMP_SET, "Set No Heat Temp", 0},
                         {C_UP_PER_C_DOWN, "C up per C down", 0},
                         {COP_CRC, "COP & CRC", 0}};
@@ -135,7 +137,7 @@ void formatPrint(short number) {
 int taskInsertionPointer = 0;
 int taskExecutingPointer = 0;
 enum statuses { ACTIVE, READY, COMPLETED };
-#define MAX_TASKS 20
+#define MAX_TASKS 15
 
 struct Task {
   void (*initFunction)(short);
@@ -180,7 +182,9 @@ void executeTask() {
     }
   }
 }
+
 const long wdtInterval = 8192;
+
 void setup() {
   for (int i = 0; i < MAX_TASKS; i++) {
     taskQueue[i].status = COMPLETED;
@@ -206,10 +210,16 @@ void setup() {
   Serial1.begin(2400, SERIAL_8E1);
   pinMode(led, OUTPUT);
   lcd.begin(16, 2);
-  lcd.print("ModBus");
+  lcd.setCursor(0, 0);
+  // print IP address:
+  IPAddress ip = WiFi.localIP();
+  lcd.print(ip);
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
   lcd.setCursor(0, 1);
-  lcd.print("MonoBloc");
-   WDT.begin(wdtInterval);
+  lcd.print(rssi);
+  lcd.print(" dBm");
+  WDT.begin(wdtInterval);
 }
 
 void loop() {
@@ -221,10 +231,10 @@ void loop() {
   handleButtons();
 }
 
-void getDewpointFromNWS() {
+void getDataFromNWS() {
   if (millis() - lastDewPointUpdateTime > dewPointUpdateInterval) {
     lastDewPointUpdateTime = millis();
-    addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
+    addTask(&requestNWSdata, &readNWSdata, 0);
   }
 }
 
@@ -248,7 +258,7 @@ void handleMODBUS() {
 void putTasksOnQueue() {
   setHotWaterTemperature();
   logData();
-  getDewpointFromNWS();
+  getDataFromNWS();
 }
 
 float getSavedData(short code) {
@@ -262,6 +272,8 @@ float getSavedData(short code) {
 
 void logData() {
   if (millis() - loggingTimer > (loggingIntervalMinutes * (millisecondsInMinute + 2000))) {
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, AMBIENT_TEMP);
+    addTask(&requestDataFromMonoBus, &saveModBusGetResponse, HOT_WATER_SET_POINT);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, DEFROST_STATUS);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, HEATER_STATUS);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
@@ -288,6 +300,7 @@ void sendDatoToGoogleSheets(short code) {
   // Assemble the string
  
     offset += sprintf(postbuffer + offset, "{\"%s\":%.2f,", "OutsideTemp", getSavedData(AMBIENT_TEMP));
+    offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "NWSTemp", getSavedData(NWS_TEMPERATURE));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Dewpoint", getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Defrost", getSavedData(DEFROST_STATUS));
     offset += sprintf(postbuffer + offset, "\"%s\":%.2f,", "Heater", getSavedData(HEATER_STATUS));
@@ -312,8 +325,6 @@ void sendDatoToGoogleSheets(short code) {
 void setHotWaterTemperature() {
   if (millis() > ((outDoorResetIntervalMinutes * millisecondsInMinute) +
                   outDoorResetTimer)) {
-    addTask(&requestDataFromMonoBus, &saveModBusGetResponse,
-            AMBIENT_TEMP);
     addTask(&setMonoBlocHotWaterTemperature, &parseModBusSetResponse,
             HOT_WATER_SET_POINT);
     outDoorResetTimer = millis();
@@ -397,6 +408,9 @@ void handleButtons() {
           lcd.setCursor(0, 1);
           lcd.print(degreesToRaiseH2O);
           lcd.print(" saved");
+        } else if (menuCodes[menuIndex].code == HOT_WATER_SET_POINT) {          
+            addTask(&setMonoBlocHotWaterTemperature, &parseModBusSetResponse,
+              HOT_WATER_SET_POINT);
         } else if (menuCodes[menuIndex].code == COIL_TEMP_FOR_DEFROST_MODE) {          
             addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               COIL_TEMP_FOR_DEFROST_MODE);
@@ -404,7 +418,7 @@ void handleButtons() {
             addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               TEMP_TO_EXTEND_DEFROST_TIME);
         } else if (menuCodes[menuIndex].code == NWS_DEW_POINT) {
-          addTask(&requestNWSdewpoint, &readNWSdewpoint, 0);
+          addTask(&requestNWSdata, &readNWSdata, 0);
         }
         return;
       }
@@ -421,9 +435,15 @@ void handleButtons() {
         lcd.print("C ");
         lcd.print((getSavedData(COIL_TEMP_FOR_DEFROST_MODE) * 2.2) + 32);
         lcd.print("F");
+      } else if (menuCodes[menuIndex].code == NWS_TEMPERATURE) {
+        lcd.setCursor(0, 1);
+        formatPrint(getSavedData(NWS_TEMPERATURE));
+        lcd.print("C ");
+        lcd.print((getSavedData(NWS_TEMPERATURE) * 2.2) + 32);
+        lcd.print("F");
       } else if (menuCodes[menuIndex].code == COP_CRC) {
         lcd.setCursor(0, 1);
-        lcd.print(calcCOP(getSavedData(HOT_WATER_SET_POINT), getSavedData(AMBIENT_TEMP)));
+        lcd.print(calcCOP(getSavedData(HOT_WATER_SET_POINT), getSavedData(NWS_TEMPERATURE)));
         lcd.print(" & ");
         lcd.print(crc16, HEX);
       } else if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
@@ -482,7 +502,7 @@ unsigned short CRC16(byte *nData, unsigned short wLength) {
 
 /* --------------------------------------------------------------------------
  */
-void requestNWSdewpoint(short code) {
+void requestNWSdata(short code) {
 if (client.connected()) {
     client.stop(); // Disconnect from the current server
   }
@@ -497,16 +517,16 @@ if (client.connected()) {
 }
 
 void setMonoBlocHotWaterTemperature(short code) {  
-  setMonoBlocTemperature(code, calcRadiantFloorTemperature(getSavedData(AMBIENT_TEMP)));
+  setMonoBlocTemperature(code, calcRadiantFloorTemperature((short)getSavedData(NWS_TEMPERATURE)));
 }
 
 void setMonoblocDewpointTemperature(short code) {
-  setMonoBlocTemperature(code, getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
+  setMonoBlocTemperature(code, (short)getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
 }
 
 /* --------------------------------------------------------------------------
  */
-void readNWSdewpoint() {
+void readNWSdata() {
   /* ---------------------------------------------------------------------- */
 
   JSONVar apiJSON = JSON.parse(httpData);
@@ -516,259 +536,269 @@ void readNWSdewpoint() {
 
   if (apiJSON.hasOwnProperty("properties")) {
     if ((String)apiJSON["properties"]["dewpoint"]["qualityControl"] == "V") {
-      saveData((double)apiJSON["properties"]["dewpoint"]["value"], COIL_TEMP_FOR_DEFROST_MODE);
+      saveData( (double)apiJSON["properties"]["dewpoint"]["value"],
+               COIL_TEMP_FOR_DEFROST_MODE);
       taskQueue[taskExecutingPointer].status = COMPLETED;
       addTask(&setMonoblocDewpointTemperature, &parseModBusSetResponse,
               COIL_TEMP_FOR_DEFROST_MODE);
     }
+    if ((String)apiJSON["properties"]["temperature"]["qualityControl"] == "V") {
+      saveData((double)apiJSON["properties"]["temperature"]["value"],
+               NWS_TEMPERATURE);
+    }
   }
 }
 
-void readGoogleScriptResponse() {
-  /* ---------------------------------------------------------------------- */
+  void readGoogleScriptResponse() {
+    /* ---------------------------------------------------------------------- */
 
-  taskQueue[taskExecutingPointer].status = COMPLETED;
-}
+    taskQueue[taskExecutingPointer].status = COMPLETED;
+  }
 
-uint32_t httpHeaderPointer = 0;
-bool inHTTPheaders = true;
-/* --------------------------------------------------------------------------
- */
-void handleHTTPResponse() {
   /* --------------------------------------------------------------------------
    */
-
-  if (client.available() && httpHeaderPointer < sizeof(httpData) - 1) {
-    if (inHTTPheaders) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") {
-        inHTTPheaders = false;
+  void handleHTTPResponse() {
+    /* --------------------------------------------------------------------------
+     */
+    uint32_t httpResponsePointer = 0;
+    bool inHTTPheaders = true;
+    while (client.available() && httpResponsePointer < sizeof(httpData) - 1) {
+      if (inHTTPheaders) {
+        String line = client.readStringUntil('\n');
+        if (line == "\r") {
+          inHTTPheaders = false;
+        }
+      } else { /* actual data reception */
+        char c = client.read();
+        httpData[httpResponsePointer++] = c;
       }
-    } else { /* actual data reception */
-      char c = client.read();
-      httpData[httpHeaderPointer++] = c;
     }
-  } else {
-    if (httpHeaderPointer == 0) {
+    if (httpResponsePointer == 0) {
       return;
     } else {
-      httpData[httpHeaderPointer] = 0;
+      httpData[httpResponsePointer] = 0;
     }
     client.stop();
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("HTTP Data");
     lcd.setCursor(0, 1);
-    lcd.print(httpHeaderPointer);
+    lcd.print(httpResponsePointer);
     lcd.print(" bytes");
-    httpHeaderPointer = 0;
+    httpResponsePointer = 0;
     inHTTPheaders = true;
     taskQueue[taskExecutingPointer].callbackFunction();
   }
-}
 
-void requestDataFromMonoBus(short code) {
-  byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
-  crc16 = CRC16(byts, 6);
-  byts[6] = crc16 % 256;
-  byts[7] = crc16 >> 8;
-  serialReceiveBufferIndex = 0;
-  bufferComplete = 7;
-  Serial1.write(byts, 8);
-  Serial1.flush();
-}
-
-void displaySerialReceiveBuffer() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  for (int i = 0; i < SERIAL_BUFFER_SIZE; i++) {
-    if (i == 8) {
-      lcd.setCursor(0, 1);
-    }
-    if (serialReceiveBuffer[i] < 16) {
-      lcd.print("0");
-    }
-    lcd.print(serialReceiveBuffer[i], HEX);
+  void requestDataFromMonoBus(short code) {
+    byte byts[8] = {1, 3, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
+    crc16 = CRC16(byts, 6);
+    byts[6] = crc16 % 256;
+    byts[7] = crc16 >> 8;
+    serialReceiveBufferIndex = 0;
+    bufferComplete = 7;
+    Serial1.write(byts, 8);
+    Serial1.flush();
   }
-}
 
-void setMonoBlocTemperature(short code, short temperature) {
-  currentCode = code;
-  byte byts[8] = {1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
-  byts[4] = temperature >> 8;
-  byts[5] = temperature % 256;
-  crc16 = CRC16(byts, 6);
-  byts[6] = crc16 % 256;
-  byts[7] = crc16 >> 8;
-  serialReceiveBufferIndex = 0;
-  bufferComplete = 8;
-  Serial1.write(byts, 8);
-  Serial1.flush();
-}
-
-void parseModBusSetResponse() {
-
-  // Set responses come back with the CRC at byte locations 6 and 7 (zero
-  // based)
-  if (!checkCRC(SET_RESPONSE)) {
+  void displaySerialReceiveBuffer() {
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Set Code:");
-    lcd.print(currentCode);
-    lcd.setCursor(0, 1);
-    lcd.print("Reset CRC failed");
+    for (int i = 0; i < SERIAL_BUFFER_SIZE; i++) {
+      if (i == 8) {
+        lcd.setCursor(0, 1);
+      }
+      if (serialReceiveBuffer[i] < 16) {
+        lcd.print("0");
+      }
+      lcd.print(serialReceiveBuffer[i], HEX);
+    }
   }
-  taskQueue[taskExecutingPointer].status = COMPLETED;
-  return;
-}
 
-short calcRadiantFloorTemperature(short outsideTemperature) {
-  return noHeatRequiredTempInC +
-         ((noHeatRequiredTempInC - outsideTemperature) * degreesToRaiseH2O);
-}
+  void setMonoBlocTemperature(short code, short temperature) {
+    currentCode = code;
+    byte byts[8] = {1, 6, (byte)(code >> 8), (byte)(code % 256), 0, 1, 0, 0};
+    byts[4] = temperature >> 8;
+    byts[5] = temperature % 256;
+    crc16 = CRC16(byts, 6);
+    byts[6] = crc16 % 256;
+    byts[7] = crc16 >> 8;
+    serialReceiveBufferIndex = 0;
+    bufferComplete = 8;
+    Serial1.write(byts, 8);
+    Serial1.flush();
+  }
 
-bool checkCRC(enum responseType setOrGet) {
-  if (setOrGet == SET_RESPONSE) {
+  void parseModBusSetResponse() {
+
     // Set responses come back with the CRC at byte locations 6 and 7 (zero
     // based)
-    crc16 = CRC16(serialReceiveBuffer, 6);
-    if (serialReceiveBuffer[6] == (crc16 % 256) &&
-        serialReceiveBuffer[7] == (crc16 >> 8)) {
-      return true;
+    if (!checkCRC(SET_RESPONSE)) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Set Code:");
+      lcd.print(currentCode);
+      lcd.setCursor(0, 1);
+      lcd.print("Reset CRC failed");
     }
-  } else {
+    taskQueue[taskExecutingPointer].status = COMPLETED;
+    return;
+  }
+
+  short calcRadiantFloorTemperature(float outsideTemperature) {
+    return noHeatRequiredTempInC +
+           ((noHeatRequiredTempInC - outsideTemperature) * degreesToRaiseH2O);
+  }
+
+  bool checkCRC(enum responseType setOrGet) {
+    if (setOrGet == SET_RESPONSE) {
+      // Set responses come back with the CRC at byte locations 6 and 7 (zero
+      // based)
+      crc16 = CRC16(serialReceiveBuffer, 6);
+      if (serialReceiveBuffer[6] == (crc16 % 256) &&
+          serialReceiveBuffer[7] == (crc16 >> 8)) {
+        return true;
+      }
+    } else {
+      // Get responses come back with the CRC at byte locations 5 and 6 (zero
+      // based)
+      crc16 = CRC16(serialReceiveBuffer, 5);
+      if (serialReceiveBuffer[5] == (crc16 % 256) &&
+          serialReceiveBuffer[6] == (crc16 >> 8)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void displayModBusGetResponse() {
+    saveModBusGetResponse();
+    short data = getSavedData(taskQueue[taskExecutingPointer].code);
+    lcd.setCursor(0, 1);
+    formatPrint(data);
+    if (taskQueue[taskExecutingPointer].code >= HOT_WATER_SET_POINT &&
+        taskQueue[taskExecutingPointer].code <= AMBIENT_TEMP) {
+      lcd.print("C ");
+      lcd.print((data * 2.2) + 32);
+      lcd.print("F");
+    }
+  }
+
+  void saveData(short data, short code) {
+    for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+      if (menuCodes[i].code == code) {
+        menuCodes[i].value = data;
+        break;
+      }
+    }
+  }
+
+  void saveModBusGetResponse() {
+    short data;
     // Get responses come back with the CRC at byte locations 5 and 6 (zero
     // based)
-    crc16 = CRC16(serialReceiveBuffer, 5);
-    if (serialReceiveBuffer[5] == (crc16 % 256) &&
-        serialReceiveBuffer[6] == (crc16 >> 8)) {
-      return true;
+    if (checkCRC(GET_RESPONSE)) {
+      data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4];
+      if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
+        data = (data >> 5) & 1;
+      } else if (taskQueue[taskExecutingPointer].code == HEATER_STATUS) {
+        data = (data >> 7) & 1;
+      }
+      saveData(data, taskQueue[taskExecutingPointer].code);
+    } else {
+      displaySerialReceiveBuffer();
+      lcd.setCursor(0, 1);
+      lcd.print("crc ");
+      lcd.print(crc16, HEX);
     }
+    taskQueue[taskExecutingPointer].status = COMPLETED;
   }
-  return false;
-}
 
-void displayModBusGetResponse() {
-  saveModBusGetResponse();
-  short data = getSavedData(taskQueue[taskExecutingPointer].code);
-  lcd.setCursor(0, 1);
-  formatPrint(data);
-  if (taskQueue[taskExecutingPointer].code >= HOT_WATER_SET_POINT &&
-      taskQueue[taskExecutingPointer].code <= AMBIENT_TEMP) {
-    lcd.print("C ");
-    lcd.print((data * 2.2) + 32);
-    lcd.print("F");
-  } 
-}
+  float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp,
+                       int8_t airTemp, int8_t deltaWater, int8_t deltaAir,
+                       float copHiWaterHiAir, float copHiWaterLowAir,
+                       float copLoWaterHiAir, float copLoWaterLowAir) {
+    float hiAirMidWaterCOP =
+        copLoWaterLowAir + ((copLoWaterHiAir - copHiWaterHiAir) *
+                            (waterTemp - HiWaterTemp) / deltaWater);
+    float loWaterMidAirCOP =
+        copLoWaterLowAir + ((copLoWaterHiAir - copLoWaterLowAir) *
+                            (airTemp - HiAirTemp) / deltaAir);
+    return (hiAirMidWaterCOP + loWaterMidAirCOP) / 2;
+  }
 
-void saveData(short data, short code) {
-  for (int i = 0; i < NUM_MENU_ITEMS; i++) {
-    if (menuCodes[i].code == code) {
-      menuCodes[i].value = data;
-      break;
+  int8_t airTemps[] = {15, 7, 2, -7, -12, -15, -20, -25};
+  int8_t waterTemps[] = {50, 45, 41, 35, 30, 20};
+  float waterCOPs[7][9] = {
+      {4.25, 3.5, 2.81, 2.65, 2.41, 2.09, 1.86, 1.32, 1.23},
+      {4.75, 3.68, 2.99, 2.84, 2.65, 2.21, 2.01, 1.57, 1.47},
+      {5.1, 3.92, 3.05, 2.96, 2.87, 2.48, 2.22, 1.73, 1.59},
+      {5.51, 4.15, 3.65, 3.28, 2.94, 2.63, 2.32, 2.01, 1.65},
+      {5.92, 4.76, 4.2, 3.63, 3.2, 2.95, 2.60, 2.17, 1.78},
+      {6.93, 5.43, 4.85, 4.3, 3.7, 3.31, 2.81, 2.48, 2.03},
+      {7.85, 6.30, 5.45, 4.81, 4.27, 3.72, 3.12, 2.79, 2.3}};
+
+  float calcCOP(int8_t waterTemp, int8_t airTemp) {
+    if (waterTemp >= waterTemps[0]) {
+      return cop(waterTemps[0], waterTemp, airTemp,
+                 waterTemps[0] - waterTemps[1], waterCOPs[0], waterCOPs[1]);
     }
-  }
-}
-
-
-void saveModBusGetResponse() {
-  short data;
-  // Get responses come back with the CRC at byte locations 5 and 6 (zero
-  // based)
-  if (checkCRC(GET_RESPONSE)) {
-    data = (serialReceiveBuffer[3] << 8) | serialReceiveBuffer[4]; 
-    if (taskQueue[taskExecutingPointer].code == DEFROST_STATUS) {
-      data = (data >> 5) & 1;
-    }else if (taskQueue[taskExecutingPointer].code == HEATER_STATUS) {
-      data = (data >> 7) & 1;
+    if (waterTemp >= waterTemps[1]) {
+      return cop(waterTemps[1], waterTemp, airTemp,
+                 waterTemps[1] - waterTemps[2], waterCOPs[1], waterCOPs[2]);
     }
-    saveData(data, taskQueue[taskExecutingPointer].code);
-  } else {
-    displaySerialReceiveBuffer();
-    lcd.setCursor(0, 1);
-    lcd.print("crc ");
-    lcd.print(crc16, HEX);
+    if (waterTemp >= waterTemps[2]) {
+      return cop(waterTemps[2], waterTemp, airTemp,
+                 waterTemps[2] - waterTemps[3], waterCOPs[2], waterCOPs[3]);
+    }
+    if (waterTemp >= waterTemps[3]) {
+      return cop(waterTemps[3], waterTemp, airTemp,
+                 waterTemps[3] - waterTemps[4], waterCOPs[3], waterCOPs[4]);
+    }
+    if (waterTemp >= waterTemps[4]) {
+      return cop(waterTemps[4], waterTemp, airTemp,
+                 waterTemps[4] - waterTemps[5], waterCOPs[4], waterCOPs[5]);
+    }
+    return 0;
   }
-  taskQueue[taskExecutingPointer].status = COMPLETED;
-}
 
-float interpolateCOP(int8_t HiWaterTemp, int8_t HiAirTemp, int8_t waterTemp,
-                     int8_t airTemp, int8_t deltaWater, int8_t deltaAir,
-                     float copHiWaterHiAir, float copHiWaterLowAir,
-                     float copLoWaterHiAir, float copLoWaterLowAir) {
-  float hiAirMidWaterCOP =
-      copLoWaterLowAir + ((copLoWaterHiAir - copHiWaterHiAir) *
-                          (waterTemp - HiWaterTemp) / deltaWater);
-  float loWaterMidAirCOP =
-      copLoWaterLowAir +
-      ((copLoWaterHiAir - copLoWaterLowAir) * (airTemp - HiAirTemp) / deltaAir);
-  return (hiAirMidWaterCOP + loWaterMidAirCOP) / 2;
-}
-
-int8_t airTemps[] = {15, 7, 2, -7, -12, -15, -20, -25};
-int8_t waterTemps[] = {50, 45, 41, 35, 30, 20};
-float waterCOPs[7][9] = {{4.25, 3.5, 2.81, 2.65, 2.41, 2.09, 1.86, 1.32, 1.23},
-                         {4.75, 3.68, 2.99, 2.84, 2.65, 2.21, 2.01, 1.57, 1.47},
-                         {5.1, 3.92, 3.05, 2.96, 2.87, 2.48, 2.22, 1.73, 1.59},
-                         {5.51, 4.15, 3.65, 3.28, 2.94, 2.63, 2.32, 2.01, 1.65},
-                         {5.92, 4.76, 4.2, 3.63, 3.2, 2.95, 2.60, 2.17, 1.78},
-                         {6.93, 5.43, 4.85, 4.3, 3.7, 3.31, 2.81, 2.48, 2.03},
-                         {7.85, 6.30, 5.45, 4.81, 4.27, 3.72, 3.12, 2.79, 2.3}};
-
-float calcCOP(int8_t waterTemp, int8_t airTemp) {
-  if (waterTemp >= waterTemps[0]) {
-    return cop(waterTemps[0], waterTemp, airTemp, waterTemps[0] - waterTemps[1],
-               waterCOPs[0], waterCOPs[1]);
+  float cop(int8_t highWaterTemp, int8_t waterTemp, int8_t airTemp,
+            int8_t deltaWater, float *hiWaterCOPs, float *loWaterCOPs) {
+    if (airTemp >= airTemps[0]) {
+      return interpolateCOP(highWaterTemp, airTemps[0], waterTemp, airTemp,
+                            deltaWater, airTemps[0] - airTemps[1],
+                            hiWaterCOPs[0], hiWaterCOPs[1], loWaterCOPs[0],
+                            loWaterCOPs[1]);
+    } else if (airTemp >= airTemps[1]) {
+      return interpolateCOP(highWaterTemp, airTemps[1], waterTemp, airTemp,
+                            deltaWater, airTemps[1] - airTemps[2],
+                            hiWaterCOPs[1], hiWaterCOPs[2], loWaterCOPs[1],
+                            loWaterCOPs[2]);
+    } else if (airTemp >= airTemps[2]) {
+      return interpolateCOP(highWaterTemp, airTemps[2], waterTemp, airTemp,
+                            deltaWater, airTemps[2] - airTemps[3],
+                            hiWaterCOPs[2], hiWaterCOPs[3], loWaterCOPs[2],
+                            loWaterCOPs[3]);
+    } else if (airTemp >= airTemps[3]) {
+      return interpolateCOP(highWaterTemp, airTemps[3], waterTemp, airTemp,
+                            deltaWater, airTemps[3] - airTemps[4],
+                            hiWaterCOPs[3], hiWaterCOPs[4], loWaterCOPs[3],
+                            loWaterCOPs[4]);
+    } else if (airTemp >= airTemps[4]) {
+      return interpolateCOP(highWaterTemp, airTemps[4], waterTemp, airTemp,
+                            deltaWater, airTemps[4] - airTemps[5],
+                            hiWaterCOPs[4], hiWaterCOPs[5], loWaterCOPs[4],
+                            loWaterCOPs[5]);
+    } else if (airTemp >= airTemps[5]) {
+      return interpolateCOP(highWaterTemp, airTemps[5], waterTemp, airTemp,
+                            deltaWater, airTemps[5] - airTemps[6],
+                            hiWaterCOPs[5], hiWaterCOPs[6], loWaterCOPs[5],
+                            loWaterCOPs[6]);
+    } else if (airTemp >= airTemps[6]) {
+      return interpolateCOP(highWaterTemp, airTemps[6], waterTemp, airTemp,
+                            deltaWater, airTemps[6] - airTemps[7],
+                            hiWaterCOPs[6], hiWaterCOPs[7], loWaterCOPs[6],
+                            loWaterCOPs[7]);
+    }
+    return 0;
   }
-  if (waterTemp >= waterTemps[1]) {
-    return cop(waterTemps[1], waterTemp, airTemp, waterTemps[1] - waterTemps[2],
-               waterCOPs[1], waterCOPs[2]);
-  }
-  if (waterTemp >= waterTemps[2]) {
-    return cop(waterTemps[2], waterTemp, airTemp, waterTemps[2] - waterTemps[3],
-               waterCOPs[2], waterCOPs[3]);
-  }
-  if (waterTemp >= waterTemps[3]) {
-    return cop(waterTemps[3], waterTemp, airTemp, waterTemps[3] - waterTemps[4],
-               waterCOPs[3], waterCOPs[4]);
-  }
-  if (waterTemp >= waterTemps[4]) {
-    return cop(waterTemps[4], waterTemp, airTemp, waterTemps[4] - waterTemps[5],
-               waterCOPs[4], waterCOPs[5]);
-  }
-  return 0;
-}
-
-float cop(int8_t highWaterTemp, int8_t waterTemp, int8_t airTemp,
-          int8_t deltaWater, float *hiWaterCOPs, float *loWaterCOPs) {
-  if (airTemp >= airTemps[0]) {
-    return interpolateCOP(highWaterTemp, airTemps[0], waterTemp, airTemp,
-                          deltaWater, airTemps[0] - airTemps[1], hiWaterCOPs[0],
-                          hiWaterCOPs[1], loWaterCOPs[0], loWaterCOPs[1]);
-  } else if (airTemp >= airTemps[1]) {
-    return interpolateCOP(highWaterTemp, airTemps[1], waterTemp, airTemp,
-                          deltaWater, airTemps[1] - airTemps[2], hiWaterCOPs[1],
-                          hiWaterCOPs[2], loWaterCOPs[1], loWaterCOPs[2]);
-  } else if (airTemp >= airTemps[2]) {
-    return interpolateCOP(highWaterTemp, airTemps[2], waterTemp, airTemp,
-                          deltaWater, airTemps[2] - airTemps[3], hiWaterCOPs[2],
-                          hiWaterCOPs[3], loWaterCOPs[2], loWaterCOPs[3]);
-  } else if (airTemp >= airTemps[3]) {
-    return interpolateCOP(highWaterTemp, airTemps[3], waterTemp, airTemp,
-                          deltaWater, airTemps[3] - airTemps[4], hiWaterCOPs[3],
-                          hiWaterCOPs[4], loWaterCOPs[3], loWaterCOPs[4]);
-  } else if (airTemp >= airTemps[4]) {
-    return interpolateCOP(highWaterTemp, airTemps[4], waterTemp, airTemp,
-                          deltaWater, airTemps[4] - airTemps[5], hiWaterCOPs[4],
-                          hiWaterCOPs[5], loWaterCOPs[4], loWaterCOPs[5]);
-  } else if (airTemp >= airTemps[5]) {
-    return interpolateCOP(highWaterTemp, airTemps[5], waterTemp, airTemp,
-                          deltaWater, airTemps[5] - airTemps[6], hiWaterCOPs[5],
-                          hiWaterCOPs[6], loWaterCOPs[5], loWaterCOPs[6]);
-  } else if (airTemp >= airTemps[6]) {
-    return interpolateCOP(highWaterTemp, airTemps[6], waterTemp, airTemp,
-                          deltaWater, airTemps[6] - airTemps[7], hiWaterCOPs[6],
-                          hiWaterCOPs[7], loWaterCOPs[6], loWaterCOPs[7]);
-  }
-  return 0;
-}
