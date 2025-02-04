@@ -564,13 +564,21 @@ void readNWSdata() {
     bool inHTTPheaders = true;
     while (client.available() && httpResponsePointer < sizeof(httpData) - 1) {
       if (inHTTPheaders) {
-        String line = client.readStringUntil('\n');
-        if (line == "\r") {
-          inHTTPheaders = false;
+        httpData[httpResponsePointer++] = client.read();
+        if(httpResponsePointer > 3)
+        {
+          if(httpData[httpResponsePointer - 1] == '\n' && httpData[httpResponsePointer - 4] == '\r' )
+          {
+            httpResponsePointer = 0;
+            inHTTPheaders = false;
+          }
+          else
+          {
+            
+          }
         }
       } else { /* actual data reception */
-        char c = client.read();
-        httpData[httpResponsePointer++] = c;
+        httpData[httpResponsePointer++] = client.read();
       }
     }
     if (httpResponsePointer == 0) {
