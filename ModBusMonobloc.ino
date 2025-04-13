@@ -520,8 +520,18 @@ void setMonoBlocHotWaterTemperature(short code) {
   setMonoBlocTemperature(code, calcRadiantFloorTemperature((short)getSavedData(NWS_TEMPERATURE)));
 }
 
+short getFrostPoint()
+{
+short frostPoint = (short)getSavedData(COIL_TEMP_FOR_DEFROST_MODE); 
+if(frostPoint > 0)
+  {
+    return 0;
+  }
+return frostPoint;
+}
+
 void setMonoblocDewpointTemperature(short code) {
-  setMonoBlocTemperature(code, (short)getSavedData(COIL_TEMP_FOR_DEFROST_MODE));
+  setMonoBlocTemperature(code, getFrostPoint());
 }
 
 /* --------------------------------------------------------------------------
