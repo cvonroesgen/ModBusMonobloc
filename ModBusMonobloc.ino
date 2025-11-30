@@ -38,7 +38,7 @@ int8_t serialReceiveBufferIndex = 0;
 int bufferComplete = 0;
 unsigned short crc16;
 int led = 13;
-int EN = 2;
+int EN = 6; // *** Zihatec RS485 Shield Modification ***
 unsigned long outDoorResetTimer =
     millis() - (outDoorResetIntervalMinutes * millisecondsInMinute);
 unsigned long loggingTimer =
@@ -208,6 +208,11 @@ void setup() {
     EEPROM.put(0, degreesToRaiseH2O);
   }
   Serial1.begin(2400, SERIAL_8E1);
+  // *** Zihatec RS485 Shield Modification ***
+  pinMode(EN, OUTPUT);         // Set EN pin as an output
+  digitalWrite(EN, LOW);       // Set to Receive (Rx) mode by default
+  // *****************************************
+
   pinMode(led, OUTPUT);
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
@@ -615,8 +620,12 @@ void readNWSdata() {
     byts[7] = crc16 >> 8;
     serialReceiveBufferIndex = 0;
     bufferComplete = 7;
-    Serial1.write(byts, 8);
-    Serial1.flush();
+    // *** Zihatec RS485 Shield Modification: Transmit (Tx) Mode ***
+  digitalWrite(EN, HIGH); 
+  Serial1.write(byts, 8);
+  Serial1.flush();
+  digitalWrite(EN, LOW); // Switch immediately back to Receive (Rx) mode
+  // *************************************************************
   }
 
   void displaySerialReceiveBuffer() {
@@ -643,8 +652,12 @@ void readNWSdata() {
     byts[7] = crc16 >> 8;
     serialReceiveBufferIndex = 0;
     bufferComplete = 8;
-    Serial1.write(byts, 8);
-    Serial1.flush();
+    // *** Zihatec RS485 Shield Modification: Transmit (Tx) Mode ***
+  digitalWrite(EN, HIGH); 
+  Serial1.write(byts, 8);
+  Serial1.flush();
+  digitalWrite(EN, LOW); // Switch immediately back to Receive (Rx) mode
+  // *************************************************************
   }
 
   void parseModBusSetResponse() {
