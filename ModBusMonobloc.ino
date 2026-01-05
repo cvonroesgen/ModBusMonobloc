@@ -47,7 +47,7 @@ unsigned long ledDisplayTimer = millis();
 
 const unsigned long dewPointUpdateInterval =
     outDoorResetIntervalMinutes * millisecondsInMinute;
-unsigned long lastDewPointUpdateTime = millis() - dewPointUpdateInterval;
+unsigned long lastNWSUpdateTime; 
 unsigned long debugTimer = millis();
 
 #define DEFROST_STATUS 2136              // defrost is bit 5
@@ -71,6 +71,7 @@ unsigned long debugTimer = millis();
 #define NO_HEAT_TEMP_SET 200
 #define C_UP_PER_C_DOWN 201
 #define COP_CRC 202
+#define IP_ADDRESS 203
 
 struct menuCode {
   unsigned short code;
@@ -98,7 +99,8 @@ menuCode menuCodes[] = {{ON_OFF, "On or Off   ", 0},
                         {NWS_TEMPERATURE, "NWS Temperature", -40},
                         {NO_HEAT_TEMP_SET, "Set No Heat Temp", 0},
                         {C_UP_PER_C_DOWN, "C up per C down", 0},
-                        {COP_CRC, "COP & CRC", 0}};
+                        {COP_CRC, "COP & CRC", 0},
+                        {IP_ADDRESS, "IP Address", 0}};
 
 const int NUM_MENU_ITEMS = sizeof(menuCodes) / sizeof(menuCode);
 
@@ -216,8 +218,17 @@ void setup() {
   pinMode(led, OUTPUT);
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
-  // print IP address:
+  lcd.print("Waiting for IP");
+  
   IPAddress ip = WiFi.localIP();
+  // print IP address:
+  while(ip[0] == '0')
+    {
+    delay(1000);
+    ip = WiFi.localIP();
+    }
+  lcd.clear();
+  lcd.setCursor(0, 0);
   lcd.print(ip);
   // print the received signal strength:
   long rssi = WiFi.RSSI();
@@ -225,6 +236,7 @@ void setup() {
   lcd.print(rssi);
   lcd.print(" dBm");
   WDT.begin(wdtInterval);
+  lastNWSUpdateTime = millis() - dewPointUpdateInterval + 5000;
 }
 
 void loop() {
@@ -237,8 +249,8 @@ void loop() {
 }
 
 void getDataFromNWS() {
-  if (millis() - lastDewPointUpdateTime > dewPointUpdateInterval) {
-    lastDewPointUpdateTime = millis();
+  if (millis() - lastNWSUpdateTime > dewPointUpdateInterval) {
+    lastNWSUpdateTime = millis();
     addTask(&requestNWSdata, &readNWSdata, 0);
   }
 }
@@ -261,9 +273,9 @@ void handleMODBUS() {
 }
 
 void putTasksOnQueue() {
-  setHotWaterTemperature();
-  logData();
   getDataFromNWS();
+  setHotWaterTemperature();
+  logData();  
 }
 
 float getSavedData(short code) {
@@ -451,6 +463,9 @@ void handleButtons() {
         lcd.print(calcCOP(getSavedData(HOT_WATER_SET_POINT), getSavedData(NWS_TEMPERATURE)));
         lcd.print(" & ");
         lcd.print(crc16, HEX);
+      } else if (menuCodes[menuIndex].code == IP_ADDRESS) {
+        lcd.setCursor(0, 1);
+        lcd.print(WiFi.localIP());
       } else if (menuCodes[menuIndex].code == NO_HEAT_TEMP_SET) {
         lcd.setCursor(0, 1);
         lcd.print(noHeatRequiredTempInC);
