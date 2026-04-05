@@ -120,6 +120,37 @@ const char googleServer[] = "script.google.com";
 WiFiSSLClient client;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 500;
+const unsigned long wifiRetryInterval = 10000;
+const unsigned long wifiConnectTimeout = 15000;
+
+enum WiFiConnectionState {
+  WIFI_STATE_INIT,
+  WIFI_STATE_CONNECTING,
+  WIFI_STATE_CONNECTED,
+  WIFI_STATE_WAIT_RETRY
+};
+
+WiFiConnectionState wifiConnectionState = WIFI_STATE_INIT;
+unsigned long wifiStateTimer = 0;
+
+void showWiFiStateIndicator() {
+  lcd.setCursor(14, 0);
+  if (wifiConnectionState == WIFI_STATE_CONNECTED) {
+    lcd.print("UP");
+  } else if (wifiConnectionState == WIFI_STATE_WAIT_RETRY) {
+    lcd.print("RT");
+  } else {
+    lcd.print("CN");
+  }
+}
+
+void setWiFiConnectionState(WiFiConnectionState newState) {
+  if (wifiConnectionState != newState) {
+    wifiConnectionState = newState;
+    wifiStateTimer = millis();
+    showWiFiStateIndicator();
+  }
+}
 
 int8_t menuIndex = 0;
 short currentCode = 0;
@@ -185,16 +216,44 @@ void executeTask() {
   }
 }
 
+void serviceWiFiConnection() {
+  uint8_t wifiStatus = WiFi.status();
+
+  if (wifiStatus == WL_CONNECTED) {
+    status = WL_CONNECTED;
+    setWiFiConnectionState(WIFI_STATE_CONNECTED);
+    return;
+  }
+
+  status = wifiStatus;
+
+  if (wifiConnectionState == WIFI_STATE_INIT) {
+    WiFi.begin(ssid, pass);
+    setWiFiConnectionState(WIFI_STATE_CONNECTING);
+  } else if (wifiConnectionState == WIFI_STATE_CONNECTING) {
+    if (millis() - wifiStateTimer > wifiConnectTimeout) {
+      WiFi.disconnect();
+      setWiFiConnectionState(WIFI_STATE_WAIT_RETRY);
+    }
+  } else if (wifiConnectionState == WIFI_STATE_CONNECTED) {
+    setWiFiConnectionState(WIFI_STATE_WAIT_RETRY);
+  } else if (wifiConnectionState == WIFI_STATE_WAIT_RETRY) {
+    if (millis() - wifiStateTimer > wifiRetryInterval) {
+      WiFi.begin(ssid, pass);
+      setWiFiConnectionState(WIFI_STATE_CONNECTING);
+    }
+  }
+}
+
 const long wdtInterval = 8192;
 
 void setup() {
   for (int i = 0; i < MAX_TASKS; i++) {
     taskQueue[i].status = COMPLETED;
   }
-  // attempt to connect to WiFi network:
-  while (status != WL_CONNECTED) {
-    status = WiFi.begin(ssid, pass);
-  }
+  status = WiFi.begin(ssid, pass);
+  wifiConnectionState = WIFI_STATE_CONNECTING;
+  wifiStateTimer = millis();
 
   EEPROM.get(sizeof(degreesToRaiseH2O), noHeatRequiredTempInC);
   if (noHeatRequiredTempInC > NO_HEAT_REQUIRED_HI_LIMIT ||
@@ -217,30 +276,18 @@ void setup() {
 
   pinMode(led, OUTPUT);
   lcd.begin(16, 2);
-  lcd.setCursor(0, 0);
-  lcd.print("Waiting for IP");
   
-  IPAddress ip = WiFi.localIP();
-  // print IP address:
-  while(ip[0] == '0')
-    {
-    delay(1000);
-    ip = WiFi.localIP();
-    }
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(ip);
+  showWiFiStateIndicator();
+
   // print the received signal strength:
   long rssi = WiFi.RSSI();
-  lcd.setCursor(0, 1);
-  lcd.print(rssi);
-  lcd.print(" dBm");
   WDT.begin(wdtInterval);
   lastNWSUpdateTime = millis() - dewPointUpdateInterval + 5000;
 }
 
 void loop() {
   WDT.refresh();
+  serviceWiFiConnection();
   executeTask();
   putTasksOnQueue();
   handleHTTPResponse();
@@ -249,6 +296,10 @@ void loop() {
 }
 
 void getDataFromNWS() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
   if (millis() - lastNWSUpdateTime > dewPointUpdateInterval) {
     lastNWSUpdateTime = millis();
     addTask(&requestNWSdata, &readNWSdata, 0);
@@ -300,12 +351,19 @@ void logData() {
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, EXT_COIL_TEMP);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, FAN_SPEED);
     addTask(&requestDataFromMonoBus, &saveModBusGetResponse, AC_AMPS);
-    addTask(&sendDatoToGoogleSheets, &readGoogleScriptResponse, 0);
+    if (WiFi.status() == WL_CONNECTED) {
+      addTask(&sendDatoToGoogleSheets, &readGoogleScriptResponse, 0);
+    }
     loggingTimer = millis();
   }
 }
 
 void sendDatoToGoogleSheets(short code) {
+  if (WiFi.status() != WL_CONNECTED) {
+    taskQueue[taskExecutingPointer].status = COMPLETED;
+    return;
+  }
+
   if (client.connected()) {
     client.stop(); // Disconnect from the current server
   }
@@ -336,6 +394,8 @@ void sendDatoToGoogleSheets(short code) {
     client.println("Connection: close");
     client.println();
     client.println(postbuffer);
+  } else {
+    taskQueue[taskExecutingPointer].status = COMPLETED;
   }
 }
 
@@ -523,7 +583,12 @@ unsigned short CRC16(byte *nData, unsigned short wLength) {
 /* --------------------------------------------------------------------------
  */
 void requestNWSdata(short code) {
-if (client.connected()) {
+  if (WiFi.status() != WL_CONNECTED) {
+    taskQueue[taskExecutingPointer].status = COMPLETED;
+    return;
+  }
+
+  if (client.connected()) {
     client.stop(); // Disconnect from the current server
   }
   if (client.connect(NWSserver, 443)) {
@@ -533,6 +598,8 @@ if (client.connected()) {
     client.println("user-agent: (vonroesgen.com, claude@vonroesgen.com)");
     client.println("Connection: close");
     client.println();
+  } else {
+    taskQueue[taskExecutingPointer].status = COMPLETED;
   }
 }
 
